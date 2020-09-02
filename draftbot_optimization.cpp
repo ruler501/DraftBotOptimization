@@ -7,14 +7,29 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <map>
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
+#ifdef USE_SYCL
 #include <CL/sycl.hpp>
+#define LOG(x) cl::sycl::log(x)
+#define SQRT(x) cl::sycl::sqrt(x)
+#define ISNAN(x) cl::sycl::isnan(x)
+#define ISINF(x) cl::sycl::isinf(x)
+#define EXP(x) cl::sycl::exp(x)
+#else
+#define LOG(x) std::log(x)
+#define SQRT(x) std::sqrt(x)
+#define ISNAN(x) std::isnan(x)
+#define ISINF(x) std::isinf(x)
+#define EXP(x) std::exp(x)
+#endif
 #include <nlohmann/json.hpp>
 
 constexpr size_t NUM_CARDS = 21467;
@@ -22,7 +37,7 @@ constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
 constexpr size_t NUM_COLORS = 5;
-constexpr size_t POPULATION_SIZE = 500;
+constexpr size_t POPULATION_SIZE = 32;
 constexpr size_t MAX_PACK_SIZE = 32;
 constexpr size_t MAX_SEEN = 512;
 constexpr size_t MAX_PICKED = 128;
@@ -111,7 +126,7 @@ struct Variables {
     Weights internal_synergy_weights = INITIAL_INTERNAL_SYNERGY_WEIGHTS;
     Weights pick_synergy_weights = INITIAL_PICK_SYNERGY_WEIGHTS;
     Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
-    std::array<float, NUM_CARDS> ratings = INITIAL_RATINGS;
+    std::vector<float> ratings{NUM_CARDS, 1};
     float prob_to_include = INITIAL_PROB_TO_INCLUDE;
     float similarity_clip = INITIAL_SIMILARITY_CLIP;
     float similarity_multiplier = 1 / (1 - INITIAL_SIMILARITY_CLIP);
@@ -242,7 +257,8 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         constants.color_requirements[i] = color_requirement;
         const auto elo_iter = card.find("elo");
         if (elo_iter != card.end()) {
-            INITIAL_RATINGS[i] = (float) std::pow(10, elo_iter->get<float>() / 400 - 3);
+            const auto elo = elo_iter->get<float>();
+            INITIAL_RATINGS[i] = (float) std::pow(10, elo / 400 - 3);
         } else {
             INITIAL_RATINGS[i] = 1.f;
         }
@@ -365,13 +381,13 @@ float get_casting_probability(const Lands& lands, const size_t card_index) {
     if (num_requirements == 0) {
         return 0;
     } else if (num_requirements < 3) {
-        std::pair<Colors, size_t> first_requirement = color_requirement[0];
+        const std::pair<Colors, size_t>& first_requirement = color_requirement[0];
         Colors color_a = first_requirement.first;
         size_t required_a = first_requirement.second;
         Colors color_b{false};
         size_t required_b = 0;
         if (num_requirements == 2) {
-            std::pair<Colors, size_t> second_requirement = color_requirement[1];
+            const std::pair<Colors, size_t>& second_requirement = color_requirement[1];
             color_b = second_requirement.first;
             required_b = second_requirement.second;
         }
@@ -445,12 +461,12 @@ float calculate_synergy(const Embedding& embedding1, const Embedding& embedding2
         length_embedding2 += embedding2[i] * embedding2[i];
         dot_product += embedding1[i] * embedding2[i];
     }
-    const float similarity = dot_product / cl::sycl::sqrt(length_embedding1 * length_embedding2);
+    const float similarity = dot_product / SQRT(length_embedding1 * length_embedding2);
     const float scaled = variables.similarity_multiplier * std::min(std::max(0.f, similarity - variables.similarity_clip),
                                                                     1 - variables.similarity_clip);
-    const float transformed = -cl::sycl::log(1 - scaled);
-    if (cl::sycl::isnan(transformed)) return 0;
-    else if (cl::sycl::isinf(transformed)) return 10;
+    const float transformed = -LOG(1 - scaled);
+    if (ISNAN(transformed)) return 0;
+    else if (ISINF(transformed)) return 10;
     else return transformed;
 }
 
@@ -560,17 +576,17 @@ float get_score(const size_t card_index, const Lands& lands, const Variables& va
                 const float rating_weight, const float pick_synergy_weight, const float fixing_weight,
                 const float internal_synergy_weight, const float openness_weight, const float colors_weight) {
     const float rating_score = rating_oracle(card_index, lands, variables, pick);
-    // std::cout << rating_score << "*" << rating_weight;
+//     std::cout << rating_score << "*" << rating_weight;
     const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick);
-    // std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
+//     std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
     const float fixing_score = fixing_oracle(card_index, lands, variables, pick);
-    // std::cout << " + " << fixing_score << "*" << fixing_weight;
+//     std::cout << " + " << fixing_score << "*" << fixing_weight;
     const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick);
-    // std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
+//     std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
     const float openness_score = openness_oracle(card_index, lands, variables, pick);
-    // std::cout << " + " << openness_score << "*" << openness_weight;
+//     std::cout << " + " << openness_score << "*" << openness_weight;
     const float colors_score = colors_oracle(card_index, lands, variables, pick);
-    // std::cout << " + " << colors_score << "*" << colors_weight << std::endl;
+//     std::cout << " + " << colors_score << "*" << colors_weight << std::endl;
     return rating_score*rating_weight + pick_synergy_score*pick_synergy_weight + fixing_score*fixing_weight
            + internal_synergy_score*internal_synergy_weight + openness_score*openness_weight + colors_score*colors_weight;
 }
@@ -622,7 +638,11 @@ float calculate_loss(const Pick& pick, const Variables& variables, const float t
         }
     }
     for (size_t i=0; i < num_valid_indices; i++) {
-        scores[i] = cl::sycl::exp((double)do_climb(i, variables, pick) / temperature);
+        try {
+            scores[i] = EXP((double) do_climb(i, variables, pick) / temperature);
+        } catch (std::exception& exc) {
+            std::cerr << exc.what() << std::endl;
+        }
         denominator += scores[i];
     }
     for (size_t i=0; i < num_valid_indices; i++) softmaxed[i] = (float)(scores[i] / denominator);
@@ -639,7 +659,7 @@ float calculate_loss(const Pick& pick, const Variables& variables, const float t
     for(size_t i=0; i < num_valid_indices; i++) {
         if (match_picked[i]) {
             if (scores[i] > 0) {
-                loss += matched_weight * cl::sycl::log(softmaxed[i]);
+                loss += matched_weight * LOG(softmaxed[i]);
             } else {
                 return 0;
             }
@@ -649,7 +669,7 @@ float calculate_loss(const Pick& pick, const Variables& variables, const float t
 }
 
 template<typename PickPtr>
-float get_batch_loss(const PickPtr& picks, const Variables& variables, const float temperature, const size_t picks_size) {
+float get_batch_loss(const PickPtr picks, const Variables& variables, const float temperature, const size_t picks_size) {
     float sum_loss = 0;
     for (size_t i=0; i < picks_size; i++) {
         const float pick_loss = calculate_loss(picks[i], variables, temperature);
@@ -659,23 +679,13 @@ float get_batch_loss(const PickPtr& picks, const Variables& variables, const flo
     return sum_loss / picks_size;
 }
 
-template<typename PickPtr>
-float test_function(const PickPtr& picks, const Variables& variables, const float temperature, const size_t picks_size) {
-    float result = 0;
-    for (size_t i=0; i < variables.ratings.size(); i++) {
-        for (size_t j=0; j < variables.ratings.size(); j++) {
-            result += picks[i % picks_size].chosen_card * variables.ratings[i] * variables.ratings[j];
-        }
-    }
-    return result;
-}
-
 class calculate_batch_loss;
 
 std::array<float, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
-                                                   const std::vector<Pick> picks, const float temperature) {
-    using namespace cl::sycl;
+                                                   const std::vector<Pick>& picks, const float temperature) {
     std::array<float, POPULATION_SIZE> results{0};
+#ifdef USE_SYCL
+    using namespace cl::sycl;
     try {
         const std::size_t plat_index = 1;
         const std::size_t dev_index = std::numeric_limits<std::size_t>::max();
@@ -732,10 +742,11 @@ std::array<float, POPULATION_SIZE> run_simulations(const std::vector<Variables>&
 
                 cgh.parallel_for<class calculate_batch_loss>(sycl::range<1>(POPULATION_SIZE),
                                                              [=](cl::sycl::id<1> wiID) {
-                                                                 outputPtr[wiID] = test_function(pickPtr, inputPtr[wiID], temperature, picksSize);
+                                                                 outputPtr[wiID] = get_batch_loss(pickPtr, inputPtr[wiID], temperature, picksSize);
                                                              }
                 );
             });
+            myQueue.wait();
         }
 
     } catch (exception& e) {
@@ -745,6 +756,25 @@ std::array<float, POPULATION_SIZE> run_simulations(const std::vector<Variables>&
         std::cout << e.what();
         throw e;
     }
+#else
+    std::array<std::future<float>, POPULATION_SIZE> futures;
+    std::array<std::thread, POPULATION_SIZE> threads;
+    for (size_t i=0; i < POPULATION_SIZE; i++) {
+        std::packaged_task<float()> task(
+                [&variables, i, &picks, temperature] { return get_batch_loss(picks, variables[i], temperature, picks.size()); }); // wrap the function
+        futures[i] = std::move(task.get_future());  // get a future
+        std::thread t(std::move(task)); // launch on a thread
+        threads[i] = std::move(t);
+    }
+    for (size_t i=0; i < POPULATION_SIZE; i++) {
+        threads[i].join();
+        futures[i].wait();
+        results[i] = futures[i].get();
+    }
+//    for (size_t i=0; i < POPULATION_SIZE; i++) {
+//        results[i] = get_batch_loss(picks, variables[i], temperature, picks.size());
+//    }
+#endif
     return results;
 }
 
@@ -846,7 +876,12 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
     std::vector<Variables> population(POPULATION_SIZE);
     std::cout << "Initializing population_indices" << std::endl;
     std::array<size_t, POPULATION_SIZE> population_indices{0};
-    for (size_t i=0; i < POPULATION_SIZE; i++) population_indices[i] = i;
+    std::vector<float> initial_ratings_vector(INITIAL_RATINGS.begin(), INITIAL_RATINGS.end());
+    std::cout << "Ratings size: " << initial_ratings_vector.size();
+    for (size_t i=0; i < POPULATION_SIZE; i++) {
+        population_indices[i] = i;
+        population[i].ratings = initial_ratings_vector;
+    }
     for(int generation=0; generation < num_generations; generation++) {
         std::cout << "Beginning crossover" << std::endl;
         for (size_t i=0; i < POPULATION_SIZE / 2 + POPULATION_SIZE % 2; i++) {
@@ -859,7 +894,11 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             mutate_variables(variables, gen);
         }
         std::cout << "Beginning calculating losses" << std::endl;
+        const auto start = std::chrono::high_resolution_clock::now();
         std::array<float, POPULATION_SIZE> losses = run_simulations(population, picks, temperature);
+        const auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end - start;
+        std::cout << "Generation took " << diff.count() << " seconds" << std::endl;
         std::array<std::pair<std::size_t, float>, POPULATION_SIZE> indexed_losses;
         for (size_t i=0; i < POPULATION_SIZE; i++) indexed_losses[i] = {i, losses[i]};
         std::sort(indexed_losses.begin(), indexed_losses.end(),
@@ -895,3 +934,4 @@ int main(const int argc, const char* argv[]) {
     output_file << result;
 }
 #pragma clang diagnostic pop
+

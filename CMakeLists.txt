@@ -33,18 +33,25 @@ set(JSON_ImplicitConversions OFF CACHE INTERNAL "")
 # include(...) for pulling in other CMake projects anyways.
 add_subdirectory(extern/json)
 
-# Behavioural options for the project
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-find_package(ComputeCpp)
-
 add_executable(DraftBotOptimization draftbot_optimization.cpp)
-
-target_include_directories (DraftBotOptimization PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/include")
 
 target_link_libraries(DraftBotOptimization PRIVATE nlohmann_json::nlohmann_json)
 
-add_sycl_to_target(TARGET DraftBotOptimization
-                   SOURCES draftbot_optimization.cpp)
+option(USE_SYCL "Use the SYCL implementation" OFF)
+
+if(USE_SYCL)
+    # Behavioural options for the project
+    set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    find_package(ComputeCpp)
+    target_compile_definitions(DraftBotOptimization PRIVATE USE_SYCL)
+    target_include_directories (DraftBotOptimization PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0/include")
+    add_sycl_to_target(TARGET DraftBotOptimization
+                       SOURCES draftbot_optimization.cpp)
+endif()
+
+if (MSVC)
+target_link_options(DraftBotOptimization PRIVATE /PROFILE)
+endif()
 
 set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 20
                                                        CXX_STANDARD_REQUIRED ON
