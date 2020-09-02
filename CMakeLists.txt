@@ -50,7 +50,7 @@ if(USE_SYCL)
 endif()
 
 if (MSVC)
-target_link_options(DraftBotOptimization PRIVATE /PROFILE)
+    target_link_options(DraftBotOptimization PRIVATE /PROFILE)
 endif()
 
 set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 11
