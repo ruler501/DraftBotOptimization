@@ -9,15 +9,14 @@
 #include <fstream>
 #include <future>
 #include <iostream>
-#include <map>
 #include <random>
-#include <sstream>
-#include <string>
 #include <thread>
 #include <vector>
 
 #ifdef USE_SYCL
 #include <CL/sycl.hpp>
+#include <numeric>
+
 #define LOG(x) cl::sycl::log(x)
 #define SQRT(x) cl::sycl::sqrt(x)
 #define ISNAN(x) cl::sycl::isnan(x)
@@ -30,311 +29,8 @@
 #define ISINF(x) std::isinf(x)
 #define EXP(x) std::exp(x)
 #endif
-#include <nlohmann/json.hpp>
 
-constexpr size_t NUM_CARDS = 21467;
-constexpr size_t PACKS = 3;
-constexpr size_t PACK_SIZE = 15;
-constexpr size_t EMBEDDING_SIZE = 64;
-constexpr size_t NUM_COLORS = 5;
-constexpr size_t POPULATION_SIZE = 128;
-constexpr size_t MAX_PACK_SIZE = 32;
-constexpr size_t MAX_SEEN = 512;
-constexpr size_t MAX_PICKED = 128;
-constexpr size_t NUM_COMBINATIONS = 32;
-constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
-using Weights = std::array<std::array<float, PACK_SIZE>, PACKS>;
-using Colors = std::array<bool, NUM_COLORS>;
-using Lands = std::array<std::pair<Colors, size_t>, NUM_COMBINATIONS>;
-using ColorRequirement = std::array<std::pair<Colors, size_t>, 5>;
-using Embedding = std::array<float, EMBEDDING_SIZE>;
-using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, 18>, 18>, 18>, 4>, 7>, 9>;
-
-constexpr Weights INITIAL_RATING_WEIGHTS{{
-                                                 {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                                 {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                 {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                         }};
-constexpr Weights INITIAL_COLORS_WEIGHTS{{
-                                                 {20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20},
-                                                 {40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40},
-                                                 {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60},
-                                         }};
-constexpr Weights INITIAL_FIXING_WEIGHTS{{
-                                                 {0.1f, 0.3f, 0.6f, 0.8f, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                                                 {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-                                                 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                                         }};
-constexpr Weights INITIAL_INTERNAL_SYNERGY_WEIGHTS{{
-                                                           {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                                           {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                           {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                                   }};
-constexpr Weights INITIAL_PICK_SYNERGY_WEIGHTS{{
-                                                       {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                                       {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                       {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                               }};
-constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
-                                                   {4, 12, 12.3f, 12.6f, 13, 13.4f, 13.7f, 14, 15, 14.6f, 14.2f, 13.8f, 13.4f, 13, 12.6f},
-                                                   {13, 12.6f, 12.2f, 11.8f, 11.4f, 11, 10.6f, 10.2f, 9.8f, 9.4f, 9, 8.6f, 8.2f, 7.8f, 7},
-                                                   {8, 7.5f, 7, 6.5f, 6, 5.5f, 5, 4.5f, 4, 3.5f, 3, 2.5f, 2, 1.5f, 1},
-                                           }};
-constexpr float INITIAL_PROB_TO_INCLUDE = 0.67f;
-constexpr float INITIAL_SIMILARITY_CLIP = 0.7f;
-constexpr Lands DEFAULT_LANDS{{
-                                      {{false, false, false, false, false}, 0},
-                                      {{true, false, false, false, false}, 4},
-                                      {{false, true, false, false, false}, 4},
-                                      {{false, false, true, false, false}, 3},
-                                      {{false, false, false, true, false}, 3},
-                                      {{false, false, false, false, true}, 3},
-                                      {{true, true, false, false, false}, 0},
-                                      {{false, true, true, false, false}, 0},
-                                      {{false, false, true, true, false}, 0},
-                                      {{false, false, false, true, true}, 0},
-                                      {{true, false, false, false, true}, 0},
-                                      {{true, false, true, false, false}, 0},
-                                      {{false, true, false, true, false}, 0},
-                                      {{false, false, true, false, true}, 0},
-                                      {{true, false, false, true, false}, 0},
-                                      {{false, true, false, false, true}, 0},
-                                      {{true, true, false, false, true}, 0},
-                                      {{true, true, true, false, false}, 0},
-                                      {{false, true, true, true, false}, 0},
-                                      {{false, false, true, true, true}, 0},
-                                      {{true, false, false, true, true}, 0},
-                                      {{true, false, true, true, false}, 0},
-                                      {{false, true, false, true, true}, 0},
-                                      {{true, false, true, false, true}, 0},
-                                      {{true, true, false, true, false}, 0},
-                                      {{false, true, true, false, true}, 0},
-                                      {{false, true, true, true, true}, 0},
-                                      {{true, false, true, true, true}, 0},
-                                      {{true, true, false, true, true}, 0},
-                                      {{true, true, true, false, true}, 0},
-                                      {{true, true, true, true, false}, 0},
-                                      {{true, true, true, true, true}, 0},
-                              }};
-
-std::array<float, NUM_CARDS> INITIAL_RATINGS;
-
-struct Variables {
-    Weights rating_weights = INITIAL_RATING_WEIGHTS;
-    Weights colors_weights = INITIAL_COLORS_WEIGHTS;
-    Weights fixing_weights = INITIAL_FIXING_WEIGHTS;
-    Weights internal_synergy_weights = INITIAL_INTERNAL_SYNERGY_WEIGHTS;
-    Weights pick_synergy_weights = INITIAL_PICK_SYNERGY_WEIGHTS;
-    Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
-    std::array<float, NUM_CARDS> ratings{1};
-    float prob_to_include = INITIAL_PROB_TO_INCLUDE;
-    float similarity_clip = INITIAL_SIMILARITY_CLIP;
-    float similarity_multiplier = 1 / (1 - INITIAL_SIMILARITY_CLIP);
-};
-
-struct Pick {
-    std::array<size_t, MAX_PACK_SIZE> in_pack;
-    std::array<size_t, MAX_SEEN> seen;
-    std::array<size_t, MAX_PICKED> picked;
-    size_t pack_num;
-    size_t pick_num;
-    size_t pack_size;
-    size_t packs;
-    size_t chosen_card;
-
-    explicit Pick(const nlohmann::json& pick_json) : in_pack{std::numeric_limits<size_t>::max()},
-                                                     seen{std::numeric_limits<size_t>::max()},
-                                                     picked{std::numeric_limits<size_t>::max()},
-                                                     pack_num(pick_json["pack"].get<size_t>()), pick_num(pick_json["pick"].get<size_t>()),
-                                                     pack_size(pick_json["packSize"].get<size_t>()), packs(pick_json["packs"].get<size_t>()),
-                                                     chosen_card(pick_json["chosenCard"].get<size_t>()) {
-        auto _in_pack = pick_json["cardsInPack"].get<std::vector<size_t>>();
-        auto _seen = pick_json["seen"].get<std::vector<size_t>>();
-        auto _picked = pick_json["picked"].get<std::vector<size_t>>();
-        for (size_t i=0; i < _in_pack.size(); i++) in_pack[i] = _in_pack[i];
-        for (size_t i=_in_pack.size(); i < in_pack.size(); i++) in_pack[i] = std::numeric_limits<size_t>::max();
-        for (size_t i=0; i < _seen.size(); i++) seen[i] = _seen[i];
-        for (size_t i=_seen.size(); i < seen.size(); i++) seen[i] = std::numeric_limits<size_t>::max();
-        for (size_t i=0; i < _picked.size(); i++) picked[i] = _picked[i];
-        for (size_t i=_picked.size(); i < picked.size(); i++) picked[i] = std::numeric_limits<size_t>::max();
-    }
-};
-
-const std::map<std::string, Colors> FETCH_LANDS{ // NOLINT(cert-err58-cpp)
-        {"Arid Mesa", {true, false, false, true, false}},
-        {"Bloodstained Mire", {false, false, true, true, false}},
-        {"Flooded Strand", {true, true, false, false, false}},
-        {"Marsh Flats", {true, false, true, false, false}},
-        {"Misty Rainforest", {false, true, false, false, true}},
-        {"Polluted Delta", {false, true, true, false, false}},
-        {"Scalding Tarn", {false, true, false, true, false}},
-        {"Windswept Heath", {true, false, false, false, true}},
-        {"Verdant Catacombs", {false, false, true, false, true}},
-        {"Wooded Foothills", {false, false, false, true, true}},
-        {"Prismatic Vista", {true, true, true, true, true}},
-        {"Fabled Passage", {true, true, true, true, true}},
-        {"Terramorphic Expanse", {true, true, true, true, true}},
-        {"Evolving Wilds", {true, true, true, true, true}},
-};
-
-struct Constants {
-    std::array<ColorRequirement, NUM_CARDS> color_requirements; // NOLINT(cert-err58-cpp)
-    std::array<size_t, NUM_CARDS> cmcs;
-    std::array<Colors, NUM_CARDS> card_colors;
-    std::array<bool, NUM_CARDS> is_land;
-    std::array<bool, NUM_CARDS> is_fetch;
-    std::array<bool, NUM_CARDS> has_basic_land_types;
-    std::array<Embedding, NUM_CARDS> embeddings;
-    CastingProbabilityTable prob_to_cast;
-};
-
-void populate_constants(const std::string& file_name, Constants& constants) {
-    std::cout << "Parsing " << file_name << std::endl;
-    std::ifstream carddb_file(file_name);
-    nlohmann::json carddb;
-    carddb_file >> carddb;
-    std::cout << "populating constants" << std::endl;
-    for (size_t i=0; i < NUM_CARDS; i++) {
-        const nlohmann::json card = carddb.at(i);
-        constants.cmcs[i] = card["cmc"].get<size_t>();
-        const auto type_line = card["type"].get<std::string>();
-        constants.is_land[i] = type_line.find("Land") != std::string::npos;
-        size_t basic_land_types = 0;
-        for (const std::string& land_type : {"Plains", "Island", "Swamp", "Mountain", "Forest"}) {
-            if (type_line.find(land_type) != std::string::npos) {
-                basic_land_types++;
-            }
-        }
-        constants.has_basic_land_types[i] = basic_land_types > 1;
-        const auto name = card["name"].get<std::string>();
-        const auto fetch_land = FETCH_LANDS.find(name);
-        constants.is_fetch[i] = fetch_land != FETCH_LANDS.end();
-        if (constants.is_fetch[i]) {
-            constants.card_colors[i] = fetch_land->second;
-        } else {
-            const auto card_color_identity = card["color_identity"].get<std::vector<std::string>>();
-            Colors our_card_colors{false, false, false, false, false};
-            for (const std::string& color : card_color_identity) {
-                if(color == "W") {
-                    our_card_colors[0] = true;
-                } else if(color == "U") {
-                    our_card_colors[1] = true;
-                } else if(color == "B") {
-                    our_card_colors[2] = true;
-                } else if(color == "R") {
-                    our_card_colors[3] = true;
-                } else if(color == "G") {
-                    our_card_colors[4] = true;
-                }
-            }
-            constants.card_colors[i] = our_card_colors;
-        }
-        const auto parsed_cost = card["parsed_cost"].get<std::vector<std::string>>();
-        std::map<Colors, size_t> color_requirement_map;
-        for (const std::string& symbol : parsed_cost) {
-            Colors colors{false};
-            if (symbol.find('p') != std::string::npos || symbol.find('2') != std::string::npos) {
-                continue;
-            }
-            size_t count = 0;
-            for (size_t j=0; j < COLORS.size(); j++) {
-                if (symbol.find(COLORS[j]) != std::string::npos) {
-                    colors[j] = true;
-                    count++;
-                }
-            }
-            if(count > 0) {
-                auto pair = color_requirement_map.find(colors);
-                if (pair != color_requirement_map.end()) {
-                    pair->second++;
-                } else {
-                    color_requirement_map[colors] = 1;
-                }
-            }
-        }
-        ColorRequirement color_requirement{{{{false, false, false, false, false}, 0}}};
-        size_t index = 0;
-        for (const auto& pair : color_requirement_map) {
-            color_requirement[index] = pair;
-            index += 1;
-        }
-        constants.color_requirements[i] = color_requirement;
-        const auto elo_iter = card.find("elo");
-        if (elo_iter != card.end()) {
-            const auto elo = elo_iter->get<float>();
-            INITIAL_RATINGS[i] = (float) std::pow(10, elo / 400 - 3);
-        } else {
-            INITIAL_RATINGS[i] = 1.f;
-        }
-        const auto embedding_iter = card.find("embedding");
-        if (embedding_iter != card.end()) {
-            constants.embeddings[i] = embedding_iter->get<Embedding>();
-        } else {
-            constants.embeddings[i] = {0};
-        }
-    }
-    float rating_max = 0.f;
-    for (size_t i=0; i < NUM_CARDS; i++) rating_max = std::max(rating_max, INITIAL_RATINGS[i]);
-    rating_max = 10 / rating_max;
-    for (size_t i=0; i < NUM_CARDS; i++) rating_max /= INITIAL_RATINGS[i];
-    std::cout << "Done populating constants" << std::endl;
-}
-
-void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
-    std::cout << "Parsing " << file_name << std::endl;
-    nlohmann::json data;
-    std::ifstream data_file(file_name);
-    data_file >> data;
-    std::cout << "populating prob_to_cast" << std::endl;
-    for (const auto& item : data.items()) {
-        const size_t cmc = std::stoi(item.key());
-        if (constants.prob_to_cast.size() < cmc + 1) {
-            std::cerr << "Too big index at depth 0: " << cmc << std::endl;
-            continue;
-        }
-        auto& inner1 = constants.prob_to_cast[cmc];
-        for (const auto& item2 : item.value().items()) {
-            const size_t required_a = std::stoi(item2.key());
-            if (inner1.size() < required_a + 1) {
-                std::cerr << "Too big index at depth 1: " << required_a << std::endl;
-                continue;
-            }
-            auto& inner2 = inner1[required_a];
-            for (const auto& item3 : item2.value().items()) {
-                const size_t required_b = std::stoi(item3.key());
-                if(inner2.size() < required_b + 1) {
-                    std::cerr << "Too big index at depth 2: " << required_b << std::endl;
-                    continue;
-                }
-                auto& inner3 = inner2[required_b];
-                for (const auto& item4 : item3.value().items()) {
-                    const size_t land_count_a = std::stoi(item4.key());
-                    if (inner3.size() < land_count_a + 1) {
-                        std::cerr << "Too big index at depth 3: " << land_count_a << std::endl;
-                        continue;
-                    }
-                    auto& inner4 = inner3[land_count_a];
-                    for (const auto& item5 : item4.value().items()) {
-                        const size_t land_count_b = std::stoi(item5.key());
-                        if (inner4.size() < land_count_b + 1) {
-                            std::cerr << "Too big index at depth 4: " << land_count_b << std::endl;
-                            continue;
-                        }
-                        auto& inner5 = inner4[land_count_b];
-                        for (const auto& item6 : item5.value().items()) {
-                            const size_t land_count_ab = std::stoi(item6.key());
-                            if (inner5.size() < land_count_ab + 1) {
-                                std::cerr << "Too big index at depth 5: " << land_count_ab << std::endl;
-                                continue;
-                            }
-                            inner5[land_count_ab] = item6.value().get<float>();
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+#include "draftbot_optimization.h"
 
 float interpolate_weights(const Weights& weights, const Pick& pick) {
     const float x_index = PACKS * (float)pick.pack_num / (float)pick.packs;
@@ -358,41 +54,21 @@ float interpolate_weights(const Weights& weights, const Pick& pick) {
     return XY * XY_weight + Xy * Xy_weight + xY * xY_weight + xy * xy_weight;
 }
 
-float get_prob_to_cast(const size_t cmc, const size_t requiredA, const size_t requiredB, const size_t land_count_a,
-                       const size_t land_count_b, const size_t land_count_ab, const Constants& constants) {
-    if (constants.prob_to_cast.size() > cmc) {
-        const auto& inner1 = constants.prob_to_cast[cmc];
-        if (inner1.size() > requiredA) {
-            const auto& inner2 = inner1[requiredA];
-            if (inner2.size() > requiredB) {
-                const auto& inner3 = inner2[requiredB];
-                if (inner3.size() > land_count_a) {
-                    const auto& inner4 = inner3[land_count_a];
-                    if (inner4.size() > land_count_b) {
-                        const auto& inner5 = inner4[land_count_b];
-                        if (inner5.size() > land_count_ab) {
-                            return inner5[land_count_ab];
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-bool does_intersect(const Colors& a, const Colors& b) {
-    for (size_t i=0; i < NUM_COLORS; i++) {
-        if(a[i] && b[i]) return true;
-    }
-    return false;
+float get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t land_count_a,
+                       size_t land_count_b, size_t land_count_ab, const Constants& constants) {
+    cmc = std::min(cmc, PROB_DIM_0 - 1);
+    required_a = std::min(required_a, PROB_DIM_1 - 1);
+    required_b = std::min(required_b, PROB_DIM_2 - 1);
+    land_count_a = std::min(land_count_a, PROB_DIM_3 - 1);
+    land_count_b = std::min(land_count_b, PROB_DIM_4 - 1);
+    land_count_ab = std::min(land_count_ab, PROB_DIM_5 - 1);
+    return constants.prob_to_cast[cmc][required_a][required_b][land_count_a][land_count_b][land_count_ab];
 }
 
 float get_casting_probability(const Lands& lands, const size_t card_index, const Constants& constants) {
     const ColorRequirement &color_requirement = constants.color_requirements[card_index];
     size_t num_requirements = 5;
     for (size_t i = 0; i < color_requirement.size(); i++) {
-        return color_requirement[i].second;
         if (color_requirement[i].second == 0) {
             num_requirements = i;
             break;
@@ -401,13 +77,13 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
     if (num_requirements == 0) {
         return 1;
     } else if (num_requirements < 3) {
-        const std::pair<Colors, size_t>& first_requirement = color_requirement[0];
-        Colors color_a = first_requirement.first;
+        const std::pair<std::array<bool, 32>, size_t>& first_requirement = color_requirement[0];
+        std::array<bool, 32> color_a = first_requirement.first;
         size_t required_a = first_requirement.second;
-        Colors color_b{false};
+        std::array<bool, 32> color_b{false};
         size_t required_b = 0;
         if (num_requirements == 2) {
-            const std::pair<Colors, size_t>& second_requirement = color_requirement[1];
+            const std::pair<std::array<bool, 32>, size_t>& second_requirement = color_requirement[1];
             color_b = second_requirement.first;
             required_b = second_requirement.second;
         }
@@ -415,7 +91,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
             const size_t temp = required_a;
             required_a = required_b;
             required_b = temp;
-            Colors temp_colors = color_a;
+            std::array<bool, 32> temp_colors = color_a;
             color_a = color_b;
             color_b = temp_colors;
         }
@@ -424,8 +100,8 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
         size_t land_count_ab = 0;
         for (size_t i=0; i < NUM_COMBINATIONS; i++) {
             const std::pair<Colors, size_t>& entry = lands[i];
-            bool intersection_a = does_intersect(color_a, entry.first);
-            bool intersection_b = does_intersect(color_b, entry.first);
+            bool intersection_a = color_a[i];
+            bool intersection_b = color_b[i];
             if(intersection_a && !intersection_b) {
                 land_count_a += entry.second;
             } else if(!intersection_a && intersection_b) {
@@ -443,13 +119,12 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
         float probability = 1.f;
         const size_t cmc = constants.cmcs[card_index];
         for (size_t i=0; i < num_requirements; i++) {
-            const std::pair<Colors, size_t>& entry = color_requirement[i];
+            const std::pair<std::array<bool, 32>, size_t>& entry = color_requirement[i];
             total_devotion += entry.second;
             size_t land_count = 0;
             for (size_t j=0; j < NUM_COMBINATIONS; j++) {
                 const std::pair<Colors, size_t>& entry2 = lands[j];
-                bool intersection = does_intersect(entry.first, entry2.first);
-                if (!intersection) {
+                if (entry.first[j]) {
                     land_count += entry2.second;
                 }
             }
@@ -458,10 +133,9 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
         size_t land_count = 0;
         for (size_t i=0; i < NUM_COMBINATIONS; i++) {
             const std::pair<Colors, size_t>& entry2 = lands[i];
-            for (size_t j=0; j < color_requirement.size(); j++) {
-                const std::pair<Colors, size_t>& entry = color_requirement[j];
-                bool intersection = does_intersect(entry.first, entry2.first);
-                if (!intersection) {
+            for (size_t j=0; j < num_requirements; j++) {
+                const std::pair<std::array<bool, 32>, size_t>& entry = color_requirement[j];
+                if (entry.first[i]) {
                     land_count += entry2.second;
                     break;
                 }
@@ -679,67 +353,51 @@ std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variab
     for(size_t i=0; i < num_valid_indices; i++) {
         if (pick.in_pack[i] == pick.chosen_card) {
             if (softmaxed[i] >= 0) {
-                return std::pair<double, bool>(-LOG(softmaxed[i]), softmaxed[i] == max_score);
+                return {-LOG(softmaxed[i]), softmaxed[i] == max_score};
             } else {
-                return std::pair<double, bool>(-1, false);
+                return {-1, false};
             }
         }
     }
-    return std::pair<double, bool>(-2, false);
+    return {-2, false};
 }
 
-template<typename PickPtr>
-float get_batch_loss(const PickPtr picks, const Variables& variables, const float temperature, const size_t picks_size,
-                     const Constants& constants) {
-    float sum_loss = 0;
-    for (size_t i=0; i < picks_size; i++) {
-        const float pick_loss = calculate_loss(picks[i], variables, temperature, constants);
-        if (pick_loss < 0) return -1;
-        sum_loss += pick_loss;
+std::array<double, 2> get_batch_loss(const std::array<Pick, PICKS_PER_GENERATION> picks, const Variables& variables,
+                                     const float temperature, const Constants& constants) {
+    double sum_loss = 0;
+    size_t count_correct = 0;
+    for (size_t i=0; i < PICKS_PER_GENERATION; i++) {
+        const std::pair<double, bool> pick_loss = calculate_loss(picks[i], variables, temperature, constants);
+        if (pick_loss.first < 0) return {-1, -1};
+        sum_loss += pick_loss.first;
+        if (pick_loss.second) count_correct++;
     }
-    return sum_loss / picks_size;
+    return {sum_loss / PICKS_PER_GENERATION, count_correct / (double)PICKS_PER_GENERATION};
 }
 
 class calculate_batch_loss;
 
-std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
-                                                   const std::vector<Pick>& picks, const float temperature,
-                                                   const std::shared_ptr<const Constants> constants) {
-    std::array<double, POPULATION_SIZE> results{0};
+std::array<std::array<double, 2>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
+                                                                   const std::vector<Pick>& picks, const float temperature,
+                                                                   const std::shared_ptr<const Constants>& constants) {
+    std::array<std::array<double, 2>, POPULATION_SIZE> results{{0,0}};
 #ifdef USE_SYCL
     using namespace cl::sycl;
     try {
-        std::vector<float> output(POPULATION_SIZE * picks.size(), 42);
-        const std::size_t plat_index = 1;
-        const std::size_t dev_index = std::numeric_limits<std::size_t>::max();
         const auto dev_type = cl::sycl::info::device_type::gpu;
-        std::cout << "Getting platforms" << std::endl;
         // Platform selection
         auto plats = cl::sycl::platform::get_platforms();
-        std::cout << "Retrieved plats" << std::endl;
-        std::cout << "Empty: " << plats.empty() << std::endl;
         if (plats.empty()) throw std::runtime_error{ "No OpenCL platform found." };
 
-        std::cout << "Found platforms:" << std::endl;
-        for (const auto& plat : plats) std::cout << "\t" << plat.get_info<cl::sycl::info::platform::vendor>() << std::endl;
-
-        auto plat = plats.at(plat_index == std::numeric_limits<std::size_t>::max() ? 0 : plat_index);
-
-        std::cout << "\n" << "Selected platform: " << plat.get_info<cl::sycl::info::platform::vendor>() << std::endl;
-
+        auto plat = plats.at(1);
         // Device selection
         auto devs = plat.get_devices(dev_type);
-        std::cout << "Found devices:"<< std::endl;
-        for (const auto& dev : devs) std::cout << "\t" << dev.get_info<cl::sycl::info::device::name>() << std::endl;
-
         if (devs.empty()) throw std::runtime_error{ "No OpenCL device of specified type found on selected platform." };
 
-        auto dev = devs.at(dev_index == std::numeric_limits<std::size_t>::max() ? 0 : dev_index);
-
-        std::cout << "Selected device: " << dev.get_info<cl::sycl::info::device::name>() << "\n" << std::endl;
+        auto dev = devs.at(0);
 
         // Context, queue, buffer creation
-        auto async_error_handler = [](const cl::sycl::exception_list& errors) { for (auto error : errors) throw error; };
+        auto async_error_handler = [](const cl::sycl::exception_list& errors) { for (const auto& error : errors) throw error; }; // NOLINT(misc-throw-by-value-catch-by-reference,hicpp-exception-baseclass)
 
         cl::sycl::context ctx{ dev, async_error_handler };
 
@@ -749,11 +407,10 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
 
         /* Create a scope to control data synchronisation of buffer objects. */
         {
-            size_t picksSize = picks.size();
             buffer<Variables, 1> inputBuffer(variables.data(), sycl::range<1>(POPULATION_SIZE));
             buffer<Pick, 1> picksBuffer(picks.data(), sycl::range<1>(picks.size()));
             buffer<Constants, 1> constantsBuffer(constants.get(), sycl::range<1>(1));
-            buffer<std::pair<double, bool>, 2> outputBuffer{{POPULATION_SIZE, picksSize}};
+            buffer<std::pair<double, bool>, 2> outputBuffer{{POPULATION_SIZE, PICKS_PER_GENERATION}};
 
             /* Submit a command_group to execute from the queue. */
             myQueue.submit([&](handler &cgh) {
@@ -776,29 +433,28 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
             myQueue.wait();
             auto readOutputPtr = outputBuffer.get_access<access::mode::read>();
             for (size_t i=0; i < POPULATION_SIZE; i++) {
-                double result = 0;
                 size_t count_correct = 0;
-                for (size_t j=0; j < picksSize; j++) {
+                for (size_t j=0; j < PICKS_PER_GENERATION; j++) {
 //                    if (j % 1000 == 0 || readOutputPtr[i][j].first < 0 || ISINF(readOutputPtr[i][j].first) || j == 10606 || j == 10664 || j==11782 || j==11782) std::cout << i << "," << j << " " << readOutputPtr[i][j].first << "," << readOutputPtr[i][j].second << std::endl;
-                    result += readOutputPtr[i][j].first;
+                    results[i][0] += readOutputPtr[i][j].first;
                     if (readOutputPtr[i][j].second) count_correct++;
                 }
-                std::cout << "Generation " << i << ": " << result / picksSize << "," << count_correct / (double)picksSize << std::endl;
-                results[i] = result / picksSize;
+                results[i][1] = count_correct / (double)PICKS_PER_GENERATION;
+                results[i][0] /= results[i][1] * PICKS_PER_GENERATION;
+//                std::cout << "Generation " << i << ": " << results[i][0] << ", " << results[i][1] << ", " << 1 / results[i][1] << std::endl;
             }
         }
     } catch (exception& e) {
-
         /* In the case of an exception being throw, print the error message and
          * rethrow it. */
-        std::cout << e.what();
-        throw e;
+        std::cerr << e.what() << std::endl;
+        std::rethrow_exception(std::current_exception());
     }
 #else
-    std::array<std::future<float>, POPULATION_SIZE> futures;
+    std::array<std::future<std::array<double, 2>>, POPULATION_SIZE> futures;
     std::array<std::thread, POPULATION_SIZE> threads;
     for (size_t i=0; i < POPULATION_SIZE; i++) {
-        std::packaged_task<float()> task(
+        std::packaged_task<std::array<double, 2>()> task(
                 [&variables, i, &picks, temperature, &constants] {
                     return get_batch_loss(picks, variables[i], temperature, picks.size(), *constants);
                 }); // wrap the function
@@ -818,32 +474,7 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
     return results;
 }
 
-std::vector<Pick> load_picks(const std::string& folder) {
-    std::cout << "Loading picks" << std::endl;
-    std::vector<Pick> results;
-    for (size_t i=1; i < 6; i++) {
-        std::ostringstream path_stream;
-        path_stream << folder << i << ".json";
-        std::string path = path_stream.str();
-        std::cout << "Loading file " << path << std::endl;
-        nlohmann::json drafts;
-        std::ifstream drafts_file(path);
-        drafts_file >> drafts;
-        std::cout << "Parsed file" << std::endl;
-        for (const auto& draft_entry : drafts.items()) {
-            for (const auto& pick_entry : draft_entry.value()["picks"].items()) {
-                if (pick_entry.value()["cardsInPack"].size() > 1) {
-                    results.emplace_back(pick_entry.value());
-                }
-            }
-        }
-    }
-    std::cout << "Done loading picks" << std::endl;
-    return results;
-}
-
 Weights crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64& gen) {
-    std::uniform_int_distribution<size_t> coin(0, 1);
     Weights result = weights1;
     for (size_t pack=0; pack < PACKS; pack++) {
         for (size_t pick=0; pick < PACK_SIZE; pick++) {
@@ -854,7 +485,6 @@ Weights crossover_weights(const Weights& weights1, const Weights& weights2, std:
 }
 
 Variables crossover_variables(const Variables& variables1, const Variables& variables2, std::mt19937_64& gen) {
-    std::uniform_int_distribution<size_t> coin(0, 1);
     Variables result = variables1;
     result.rating_weights = crossover_weights(variables1.rating_weights, variables2.rating_weights, gen);
     result.pick_synergy_weights = crossover_weights(variables1.pick_synergy_weights, variables2.pick_synergy_weights, gen);
@@ -911,37 +541,48 @@ Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
 
 Variables optimize_variables(const float temperature, const std::vector<Pick>& picks, const size_t num_generations,
                              const std::shared_ptr<const Constants>& constants) {
-    std::cout << "Beginning optimize_variables with population size of " << POPULATION_SIZE << std::endl;
+    std::cout << "Beginning optimize_variables with population size of " << POPULATION_SIZE << std::endl << std::endl;
     std::random_device rd{};
     std::mt19937_64 gen{rd()};
-    const std::uniform_int_distribution<size_t> crossover_selector(0, POPULATION_SIZE / 2 + POPULATION_SIZE % 2 - 1);
+    std::uniform_int_distribution<size_t> crossover_selector(0, POPULATION_SIZE / 2 + POPULATION_SIZE % 2 - 1);
+    std::uniform_int_distribution<size_t> pick_selector(0, picks.size() - 1);
     std::vector<Variables> population(POPULATION_SIZE);
+    std::vector<Pick> chosen_picks(PICKS_PER_GENERATION);
     for (size_t i=0; i < POPULATION_SIZE; i++) population[i].ratings = INITIAL_RATINGS;
     for(size_t generation=0; generation < num_generations; generation++) {
-        std::cout << "Beginning crossover" << std::endl;
+        const auto start = std::chrono::high_resolution_clock::now();
+//        std::cout << "Beginning crossover" << std::endl;
         for (size_t i=0; i < POPULATION_SIZE / 2 + POPULATION_SIZE % 2; i++) {
             size_t index1 = crossover_selector(gen);
             size_t index2 = crossover_selector(gen);
             population[POPULATION_SIZE / 2 + i] = crossover_variables(population[index1], population[index2], gen);
         }
-        std::cout << "Beginning mutation" << std::endl;
+//        std::cout << "Beginning mutation" << std::endl;
         for (Variables& variables : population) {
             mutate_variables(variables, gen);
         }
-        std::cout << "Beginning calculating losses" << std::endl;
-        const auto start = std::chrono::high_resolution_clock::now();
-        std::array<double, POPULATION_SIZE> losses = run_simulations(population, picks, temperature, constants);
-        const auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        std::cout << "Generation took " << diff.count() << " seconds" << std::endl;
-        std::array<std::pair<std::size_t, double>, POPULATION_SIZE> indexed_losses;
+//        std::cout << "Selecting picks for generation" << std::endl;
+        for (size_t i=0; i < PICKS_PER_GENERATION; i++) chosen_picks[i] = picks[pick_selector(gen)];
+//        std::cout << "Beginning calculating losses" << std::endl;
+        std::array<std::array<double, 2>, POPULATION_SIZE> losses = run_simulations(population, chosen_picks, temperature, constants);
+        std::array<std::pair<std::size_t, std::array<double, 2>>, POPULATION_SIZE> indexed_losses;
         for (size_t i=0; i < POPULATION_SIZE; i++) indexed_losses[i] = {i, losses[i]};
         std::sort(indexed_losses.begin(), indexed_losses.end(),
-                  [](const auto& pair1, const auto& pair2){ return pair1.second < pair2.second; });
-        std::cout << "Generation: " << generation << " Best Loss: " << indexed_losses[0].second << std::endl;
+                  [](const auto& pair1, const auto& pair2){ return pair1.second[0] < pair2.second[0]; });
+        std::sort(losses.begin(), losses.end(), [](auto& arr1, auto& arr2){ return arr1[1] > arr2[1]; });
+        std::array<double, 2> total_metrics = std::accumulate(losses.begin(), losses.end(), std::array<double, 2>{0, 0},
+                                                              [](auto& arr1, auto& arr2)->std::array<double, 2>{ return {arr1[0] + arr2[0], arr1[1] + arr2[1]}; });
+        std::cout << "Generation: " << generation << std::endl << "Best Loss: " << indexed_losses[0].second[0]
+                  << " with Accuracy: " << indexed_losses[0].second[1] << std::endl
+                  << "Best Accuracy: " << losses[0][1] << " with Loss: " << losses[0][1] << std::endl
+                  << "Average Loss: " << total_metrics[0] / POPULATION_SIZE << " with Average Accuracy: "
+                  << total_metrics[1] / POPULATION_SIZE << std::endl;
         std::vector<Variables> temp_population(POPULATION_SIZE);
         for (size_t i=0; i < POPULATION_SIZE; i++) temp_population[i] = population[indexed_losses[i].first];
         population = temp_population;
+        const auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end - start;
+        std::cout << "Generation took " << diff.count() << " seconds" << std::endl << std::endl;
     }
     return population[0];
 }
@@ -960,19 +601,6 @@ int main(const int argc, const char* argv[]) {
         return result_ptr;
     }();
     const std::vector<Pick> all_picks = load_picks("data/drafts/");
-    std::cout << "created all_picks" << std::endl;
     const Variables best_variables = optimize_variables(temperature, all_picks, generations, constants);
-    nlohmann::json result;
-    result["ratingWeights"] = best_variables.rating_weights;
-    result["pickSynergyWeights"] = best_variables.pick_synergy_weights;
-    result["fixingWeights"] = best_variables.fixing_weights;
-    result["internalSynergyWeights"] = best_variables.internal_synergy_weights;
-    result["opennessWeights"] = best_variables.openness_weights;
-    result["colorsWeights"] = best_variables.colors_weights;
-    result["probToInclude"] = best_variables.prob_to_include;
-    result["similarityClip"] = best_variables.similarity_clip;
-    result["ratings"] = best_variables.ratings;
-    std::ofstream output_file("output/variables.json");
-    output_file << result;
+    save_variables(best_variables, "output/variables.json");
 }
-#pragma clang diagnostic pop
