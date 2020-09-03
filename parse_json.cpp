@@ -1,6 +1,7 @@
 //
 // Created by Devon Richards on 9/3/2020.
 //
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -37,6 +38,7 @@ void populate_constants(const std::string& file_name, Constants& constants) {
     std::ifstream carddb_file(file_name);
     nlohmann::json carddb;
     carddb_file >> carddb;
+    std::vector<std::array<float, EMBEDDING_SIZE>> embeddings(NUM_CARDS, {0});
     for (size_t i=0; i < NUM_CARDS; i++) {
         const nlohmann::json card = carddb.at(i);
         constants.cmcs[i] = card["cmc"].get<size_t>();
@@ -95,12 +97,15 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                 }
             }
         }
-        ColorRequirement color_requirement{{{{false}, 0}}};
+        ColorRequirement color_requirement{{{{{false}, 0}}}, color_requirement_map.size()};
         size_t index = 0;
         for (const auto& pair : color_requirement_map) {
-            std::array<bool, 32> valid_lands{false};
-            for (size_t j=0; j < 32; j++) valid_lands[j] = does_intersect(pair.first, COLOR_COMBINATIONS[j]);
-            color_requirement[index] = {valid_lands, pair.second};
+            if (index >= color_requirement.first.size()) {
+                std::cerr << "Too many color requirements " << color_requirement_map.size() << " for card " << name << std::endl;
+            }
+            std::array<bool, NUM_COMBINATIONS> valid_lands{false};
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(pair.first, COLOR_COMBINATIONS[j]);
+            color_requirement.first[index] = {valid_lands, pair.second};
             index += 1;
         }
         constants.color_requirements[i] = color_requirement;
@@ -113,9 +118,25 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         }
         const auto embedding_iter = card.find("embedding");
         if (embedding_iter != card.end()) {
-            constants.embeddings[i] = embedding_iter->get<Embedding>();
+            embeddings[i] = embedding_iter->get<Embedding>();
         } else {
-            constants.embeddings[i] = {0};
+            embeddings[i] = {0};
+        }
+    }
+    std::array<float, NUM_CARDS> lengths{1};
+    for (size_t i=0; i < NUM_CARDS; i++) {
+        float length = 0;
+        for (size_t j=0; j < EMBEDDING_SIZE; j++) length += embeddings[i][j] * embeddings[i][j];
+        lengths[i] = std::sqrt(length);
+    }
+    for (size_t i=0; i < NUM_CARDS; i++) {
+        for (size_t j=0; j < NUM_CARDS; j++) {
+            float dot_product = 0;
+            for (size_t k=0; k < EMBEDDING_SIZE; k++) {
+                dot_product += embeddings[i][k] * embeddings[j][k];
+            }
+            constants.similarities[i][j] = dot_product / lengths[i] / lengths[j];
+            constants.similarities[j][i] = constants.similarities[i][j];
         }
     }
     float rating_max = 0.f;
@@ -213,6 +234,7 @@ std::vector<Pick> load_picks(const std::string& folder) {
                 }
             }
         }
+        std::cout << "Done loading " << i << std::endl;
     }
     return results;
 }

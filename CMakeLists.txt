@@ -35,7 +35,10 @@ add_subdirectory(extern/json)
 
 add_executable(DraftBotOptimization draftbot_optimization.cpp draftbot_optimization.h parse_json.cpp)
 
-target_link_libraries(DraftBotOptimization PRIVATE nlohmann_json::nlohmann_json)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(DraftBotOptimization PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
 
 option(USE_SYCL "Use the SYCL implementation" OFF)
 
@@ -51,8 +54,11 @@ endif()
 
 if (MSVC)
     target_link_options(DraftBotOptimization PRIVATE /PROFILE)
+else()
+    target_compile_options(DraftBotOptimization PRIVATE -O2 -g -march=native)
+    target_link_options(DraftBotOptimization PRIVATE -O2 -g)
 endif()
 
-set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 11
+set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 14
                                                        CXX_STANDARD_REQUIRED ON
                                                        CXX_EXTENSIONS OFF)

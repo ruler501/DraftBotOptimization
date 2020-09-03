@@ -1,3 +1,4 @@
+#include <cstddef>
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "modernize-loop-convert"
 //
@@ -67,23 +68,17 @@ float get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t 
 
 float get_casting_probability(const Lands& lands, const size_t card_index, const Constants& constants) {
     const ColorRequirement &color_requirement = constants.color_requirements[card_index];
-    size_t num_requirements = 5;
-    for (size_t i = 0; i < color_requirement.size(); i++) {
-        if (color_requirement[i].second == 0) {
-            num_requirements = i;
-            break;
-        }
-    }
+    size_t num_requirements = color_requirement.second;
     if (num_requirements == 0) {
         return 1;
     } else if (num_requirements < 3) {
-        const std::pair<std::array<bool, 32>, size_t>& first_requirement = color_requirement[0];
-        std::array<bool, 32> color_a = first_requirement.first;
+        const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& first_requirement = color_requirement.first[0];
+        std::array<bool, NUM_COMBINATIONS> color_a = first_requirement.first;
         size_t required_a = first_requirement.second;
-        std::array<bool, 32> color_b{false};
+        std::array<bool, NUM_COMBINATIONS> color_b{false};
         size_t required_b = 0;
         if (num_requirements == 2) {
-            const std::pair<std::array<bool, 32>, size_t>& second_requirement = color_requirement[1];
+            const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& second_requirement = color_requirement.first[1];
             color_b = second_requirement.first;
             required_b = second_requirement.second;
         }
@@ -91,7 +86,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
             const size_t temp = required_a;
             required_a = required_b;
             required_b = temp;
-            std::array<bool, 32> temp_colors = color_a;
+            std::array<bool, NUM_COMBINATIONS> temp_colors = color_a;
             color_a = color_b;
             color_b = temp_colors;
         }
@@ -119,7 +114,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
         float probability = 1.f;
         const size_t cmc = constants.cmcs[card_index];
         for (size_t i=0; i < num_requirements; i++) {
-            const std::pair<std::array<bool, 32>, size_t>& entry = color_requirement[i];
+            const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& entry = color_requirement.first[i];
             total_devotion += entry.second;
             size_t land_count = 0;
             for (size_t j=0; j < NUM_COMBINATIONS; j++) {
@@ -134,7 +129,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
         for (size_t i=0; i < NUM_COMBINATIONS; i++) {
             const std::pair<Colors, size_t>& entry2 = lands[i];
             for (size_t j=0; j < num_requirements; j++) {
-                const std::pair<std::array<bool, 32>, size_t>& entry = color_requirement[j];
+                const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& entry = color_requirement.first[j];
                 if (entry.first[i]) {
                     land_count += entry2.second;
                     break;
@@ -145,49 +140,27 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
     }
 }
 
-float calculate_synergy(const Embedding& embedding1, const Embedding& embedding2, const Variables& variables) {
-    float length_embedding1 = 0;
-    float length_embedding2 = 0;
-    float dot_product = 0;
-    for (size_t i=0; i < EMBEDDING_SIZE; i++) {
-        length_embedding1 += embedding1[i] * embedding1[i];
-        length_embedding2 += embedding2[i] * embedding2[i];
-        dot_product += embedding1[i] * embedding2[i];
-    }
-    const float similarity = dot_product / SQRT(length_embedding1 * length_embedding2);
-    const float scaled = variables.similarity_multiplier * std::min(std::max(0.f, similarity - variables.similarity_clip),
+float calculate_synergy(const size_t card_index_1, const size_t card_index_2, const Variables& variables, const Constants& constants) {
+    const float scaled = variables.similarity_multiplier * std::min(std::max(0.f, constants.similarities[card_index_1][card_index_2] - variables.similarity_clip),
                                                                     1 - variables.similarity_clip);
-    const float transformed = -LOG(1 - scaled);
+    const float transformed = 1 / (1 - scaled) / 3;
     if (ISNAN(transformed)) return 0;
     else if (ISINF(transformed)) return 10;
-    else return transformed;
+    else return std::min(transformed, 10.f);
 }
 
-float rating_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
-    const size_t real_card_index = pick.in_pack[card_index];
-    return get_casting_probability(lands, real_card_index, constants) * variables.ratings[real_card_index];
+float rating_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
+                    const float probability) {
+    return probability * variables.ratings[pick.in_pack[card_index]];
 }
 
 float pick_synergy_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
-                          const Constants& constants) {
-    size_t num_valid_indices = pick.picked.size();
-    for (size_t i=0; i < pick.picked.size(); i++) {
-        if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_indices = i;
-            break;
-        }
-    }
+                          const Constants& constants, std::array<float, MAX_PICKED> probabilities, const size_t num_valid_indices,
+                          const float probability, const std::array<float, MAX_PICKED>& synergies) {
     if (num_valid_indices == 0) return 0;
     float total_synergy = 0;
-    const Embedding& embedding = constants.embeddings[pick.in_pack[card_index]];
-    for (size_t i=0; i < num_valid_indices; i++) {
-        const size_t card = pick.picked[i];
-        const float probability = get_casting_probability(lands, card, constants);
-        if (probability >= variables.prob_to_include) {
-            total_synergy += probability * calculate_synergy(embedding, constants.embeddings[card], variables);
-        }
-    }
-    return total_synergy * get_casting_probability(lands, pick.in_pack[card_index], constants) / num_valid_indices;
+    for (size_t i=0; i < num_valid_indices; i++) total_synergy += probabilities[i] * synergies[i];
+    return total_synergy * probability / num_valid_indices;
 }
 
 float fixing_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
@@ -197,10 +170,8 @@ float fixing_oracle(const size_t card_index, const Lands& lands, const Variables
         for (size_t i=0; i < NUM_COLORS; i++){
             if (constants.card_colors[card_real_index][i]) {
                 size_t count = 0;
-                for (size_t j=0; j < NUM_COMBINATIONS; j++) if (lands[j].first[i]) count += lands[j].second;
-                if (count > 2) {
-                    overlap += 2;
-                }
+                for (size_t j=0; j < INCLUSION_MAP[i].size(); j++) count += lands[j].second;
+                if (count > 2) overlap += 2;
             }
         }
         if (constants.is_fetch[card_real_index]) return overlap;
@@ -209,30 +180,16 @@ float fixing_oracle(const size_t card_index, const Lands& lands, const Variables
     } else return 0;
 }
 
-float internal_synergy_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
-    size_t num_valid_indices = pick.picked.size();
-    for (size_t i=0; i < pick.picked.size(); i++) {
-        if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_indices = i;
-            break;
-        }
-    }
+float internal_synergy_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
+                              const std::array<float, MAX_PICKED>& probabilities, const size_t num_valid_indices,
+                              const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& synergies) {
     if (num_valid_indices < 2) return 0;
     float internal_synergy = 0;
-    std::array<float, MAX_PICKED> probabilities{0};
-    for (size_t i=0; i < num_valid_indices; i++) probabilities[i] = get_casting_probability(lands, pick.picked[i], constants);
     for(size_t i=0; i < num_valid_indices; i++) {
-        const float probability = probabilities[i];
-        if (probability >= variables.prob_to_include) {
-            const Embedding& embedding = constants.embeddings[pick.picked[i]];
+        if (probabilities[i] > 0) {
             float card_synergy = 0;
-            for (size_t j = 0; j < i; j++) {
-                const float probability2 = probabilities[j];
-                if (probability2 >= variables.prob_to_include) {
-                    card_synergy += probability2 * calculate_synergy(embedding, constants.embeddings[pick.picked[j]], variables);
-                }
-            }
-            internal_synergy += probability * card_synergy;
+            for (size_t j = 0; j < i; j++) card_synergy += probabilities[j] * synergies[i][j];
+            internal_synergy += probabilities[i] * card_synergy;
         }
     }
     return internal_synergy / (float)(num_valid_indices * (num_valid_indices + 1));
@@ -240,55 +197,60 @@ float internal_synergy_oracle(const size_t, const Lands& lands, const Variables&
 
 template<size_t Size>
 float sum_gated_rating(const Lands& lands, const Variables& variables, const std::array<size_t, Size>& indices,
-                       const Constants& constants) {
-    size_t num_valid_indices = indices.size();
-    for (size_t i=0; i < indices.size(); i++) {
-        if (indices[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_indices = i;
-            break;
-        }
-    }
+                       const Constants& constants, const std::array<float, Size> probabilities,
+                       const size_t num_valid_indices) {
     float result = 0;
-    for (size_t i=0; i < num_valid_indices; i++) {
-        const size_t index = indices[i];
-        const float probability = get_casting_probability(lands, index, constants);
-        if (probability >= variables.prob_to_include) {
-            result += variables.ratings[index] * probability;
-        }
-    }
-    return result / indices.size();
+    for (size_t i=0; i < num_valid_indices; i++) result += variables.ratings[indices[i]] * probabilities[i];
+    return result / num_valid_indices;
 }
 
-float openness_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
-    return sum_gated_rating(lands, variables, pick.seen, constants);
+float openness_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
+                    const std::array<float, MAX_SEEN> probabilities, const size_t num_valid_indices) {
+    return sum_gated_rating(lands, variables, pick.seen, constants, probabilities, num_valid_indices);
 }
 
-float colors_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
-    return sum_gated_rating(lands, variables, pick.picked, constants);
+float colors_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
+                    const std::array<float, MAX_PICKED> probabilities, const size_t num_valid_indices) {
+    return sum_gated_rating(lands, variables, pick.picked, constants, probabilities, num_valid_indices);
 }
 
 float get_score(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
                 const float rating_weight, const float pick_synergy_weight, const float fixing_weight,
                 const float internal_synergy_weight, const float openness_weight, const float colors_weight,
-                const Constants& constants) {
-    const float rating_score = rating_oracle(card_index, lands, variables, pick, constants);
+                const Constants& constants, const size_t num_valid_picked_indices, const size_t num_valid_seen_indices,
+                const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& internal_synergies,
+                const std::array<float, MAX_PICKED>& pick_synergies) {
+    std::array<float, MAX_PICKED> picked_probabilities{0};
+    std::array<float, MAX_SEEN> seen_probabilities{0};
+    for (size_t i=0; i < num_valid_picked_indices; i++)
+        picked_probabilities[i] = std::max(get_casting_probability(lands, pick.picked[i], constants) - variables.prob_to_include, 0.f) / (1 - variables.prob_to_include);
+    for (size_t i=0; i < num_valid_seen_indices; i++) 
+        seen_probabilities[i] = std::max(get_casting_probability(lands, pick.seen[i], constants) - variables.prob_to_include, 0.f)
+                                    / (1 - variables.prob_to_include);
+    float card_casting_probability = get_casting_probability(lands, pick.in_pack[card_index], constants);
+    const float rating_score = rating_oracle(card_index, lands, variables, pick, constants, card_casting_probability);
 //    return rating_score*rating_weight;
-//     std::cout << rating_score << "*" << rating_weight;
-    const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick, constants);
+    /* std::cout << rating_score << "*" << rating_weight; */
+    const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
+                                                         num_valid_picked_indices, card_casting_probability, pick_synergies);
 //    return pick_synergy_score*pick_synergy_weight;
-//     std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
+    /* std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight; */
     const float fixing_score = fixing_oracle(card_index, lands, variables, pick, constants);
 //    return fixing_score*fixing_weight;
-//     std::cout << " + " << fixing_score << "*" << fixing_weight;
-    const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick, constants);
+    /* std::cout << " + " << fixing_score << "*" << fixing_weight; */
+    const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick, constants,
+                                                                 picked_probabilities, num_valid_picked_indices, internal_synergies);
 //    return internal_synergy_score*internal_synergy_weight;
-//     std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
-    const float openness_score = openness_oracle(card_index, lands, variables, pick, constants);
+    /* std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight; */
+    const float openness_score = openness_oracle(card_index, lands, variables, pick, constants, seen_probabilities,
+                                                 num_valid_seen_indices);
 //    return openness_score*openness_weight;
-//     std::cout << " + " << openness_score << "*" << openness_weight;
-    const float colors_score = colors_oracle(card_index, lands, variables, pick, constants);
+    /* std::cout << " + " << openness_score << "*" << openness_weight; */
+    const float colors_score = colors_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
+                                             num_valid_picked_indices);
 //    return colors_score*colors_weight;
-//     std::cout << " + " << colors_score << "*" << colors_weight << std::endl;
+    /* std::cout << " + " << colors_score << "*" << colors_weight; */
+    /* std::cout << std::endl; */
     return rating_score*rating_weight + pick_synergy_score*pick_synergy_weight + fixing_score*fixing_weight
            + internal_synergy_score*internal_synergy_weight + openness_score*openness_weight + colors_score*colors_weight;
 }
@@ -302,21 +264,48 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
     const float internal_synergy_weight = interpolate_weights(variables.internal_synergy_weights, pick);
     const float openness_weight = interpolate_weights(variables.openness_weights, pick);
     const float colors_weight = interpolate_weights(variables.colors_weights, pick);
+    size_t num_valid_picked_indices = pick.picked.size();
+    size_t num_valid_seen_indices = pick.seen.size();
+    for (size_t i=0; i < pick.picked.size(); i++) {
+        if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
+            num_valid_picked_indices = i;
+            break;
+        }
+    }
+    for (size_t i=0; i < pick.seen.size(); i++) {
+        if (pick.seen[i] == std::numeric_limits<size_t>::max()) {
+            num_valid_seen_indices = i;
+            break;
+        }
+    }
+    std::array<std::array<float, MAX_PICKED>, MAX_PICKED> internal_synergies{{0}};
+    std::array<float, MAX_PICKED> pick_synergies{0};
+    for (size_t i=0; i < num_valid_picked_indices; i++) {
+        pick_synergies[i] = calculate_synergy(pick.picked[i], pick.in_pack[card_index], variables, constants);
+        for (size_t j=0; j < i; j++) {
+            internal_synergies[i][j] = calculate_synergy(pick.picked[i], pick.picked[j], variables, constants);
+        }
+    }
     Lands lands = DEFAULT_LANDS;
+    std::array<bool, COLORS.size() + 1> previous_adds{false};
+    std::array<bool, COLORS.size() + 1> previous_removes{false};
     while (previous_score < current_score) {
         previous_score = current_score;
         for(size_t remove_index=1; remove_index < COLORS.size() + 1; remove_index++) {
-            if (lands[remove_index].second > 0) {
+            if (lands[remove_index].second > 0 && !previous_adds[remove_index]) {
                 bool breakout = false;
                 for (size_t add_index=1; add_index < COLORS.size() + 1; add_index++) {
-                    if (add_index == remove_index) continue;
+                    if (add_index == remove_index || previous_removes[add_index]) continue;
                     Lands new_lands = lands;
                     new_lands[remove_index].second -= 1;
                     new_lands[add_index].second += 1;
                     float score = get_score(card_index, new_lands, variables, pick, rating_weight, pick_synergy_weight,
                                             fixing_weight, internal_synergy_weight, openness_weight, colors_weight,
-                                            constants);
+                                            constants, num_valid_picked_indices, num_valid_seen_indices,
+                                            internal_synergies, pick_synergies);
                     if (score > current_score) {
+                        previous_adds[add_index] = true;
+                        previous_removes[remove_index] = true;
                         current_score = score;
                         lands = new_lands;
                         breakout = true;
@@ -332,7 +321,6 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
 
 std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
     std::array<double, MAX_PACK_SIZE> scores{0};
-    std::array<double, MAX_PACK_SIZE> softmaxed{0};
     double denominator = 0;
     size_t num_valid_indices = pick.in_pack.size();
     for (size_t i=0; i < pick.in_pack.size(); i++) {
@@ -341,19 +329,17 @@ std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variab
             break;
         }
     }
-    for (size_t i=0; i < num_valid_indices; i++) {
-        scores[i] = EXP((double) do_climb(i, variables, pick, constants) / temperature);
-        denominator += scores[i];
-    }
     double max_score = 0;
     for (size_t i=0; i < num_valid_indices; i++) {
-        softmaxed[i] = scores[i] / denominator;
-        max_score = std::max(max_score, softmaxed[i]);
+        const double score = do_climb(i, variables, pick, constants);
+        scores[i] = EXP(score / temperature);
+        max_score = std::max(scores[i], max_score);
+        denominator += scores[i];
     }
     for(size_t i=0; i < num_valid_indices; i++) {
         if (pick.in_pack[i] == pick.chosen_card) {
-            if (softmaxed[i] >= 0) {
-                return {-LOG(softmaxed[i]), softmaxed[i] == max_score};
+            if (scores[i] >= 0) {
+                return {-LOG(scores[i] / denominator), scores[i] == max_score};
             } else {
                 return {-1, false};
             }
@@ -362,13 +348,13 @@ std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variab
     return {-2, false};
 }
 
-std::array<double, 2> get_batch_loss(const std::array<Pick, PICKS_PER_GENERATION> picks, const Variables& variables,
+std::array<double, 2> get_batch_loss(const std::vector<Pick>& picks, const Variables& variables,
                                      const float temperature, const Constants& constants) {
     double sum_loss = 0;
     size_t count_correct = 0;
     for (size_t i=0; i < PICKS_PER_GENERATION; i++) {
         const std::pair<double, bool> pick_loss = calculate_loss(picks[i], variables, temperature, constants);
-        if (pick_loss.first < 0) return {-1, -1};
+        if (pick_loss.first < 0) return {pick_loss.first, -1};
         sum_loss += pick_loss.first;
         if (pick_loss.second) count_correct++;
     }
@@ -451,25 +437,25 @@ std::array<std::array<double, 2>, POPULATION_SIZE> run_simulations(const std::ve
         std::rethrow_exception(std::current_exception());
     }
 #else
-    std::array<std::future<std::array<double, 2>>, POPULATION_SIZE> futures;
-    std::array<std::thread, POPULATION_SIZE> threads;
+    /* std::array<std::future<std::array<double, 2>>, POPULATION_SIZE> futures; */
+    /* std::array<std::thread, POPULATION_SIZE> threads; */
+    /* for (size_t i=0; i < POPULATION_SIZE; i++) { */
+    /*     std::packaged_task<std::array<double, 2>()> task( */
+    /*             [&variables, i, &picks, temperature, &constants] { */
+    /*                 return get_batch_loss(picks, variables[i], temperature, *constants); */
+    /*             }); // wrap the function */
+    /*     futures[i] = std::move(task.get_future());  // get a future */
+    /*     std::thread t(std::move(task)); // launch on a thread */
+    /*     threads[i] = std::move(t); */
+    /* } */
+    /* for (size_t i=0; i < POPULATION_SIZE; i++) { */
+    /*     threads[i].join(); */
+    /*     futures[i].wait(); */
+    /*     results[i] = futures[i].get(); */
+    /* } */
     for (size_t i=0; i < POPULATION_SIZE; i++) {
-        std::packaged_task<std::array<double, 2>()> task(
-                [&variables, i, &picks, temperature, &constants] {
-                    return get_batch_loss(picks, variables[i], temperature, picks.size(), *constants);
-                }); // wrap the function
-        futures[i] = std::move(task.get_future());  // get a future
-        std::thread t(std::move(task)); // launch on a thread
-        threads[i] = std::move(t);
+        results[i] = get_batch_loss(picks, variables[i], temperature, *constants);
     }
-    for (size_t i=0; i < POPULATION_SIZE; i++) {
-        threads[i].join();
-        futures[i].wait();
-        results[i] = futures[i].get();
-    }
-//    for (size_t i=0; i < POPULATION_SIZE; i++) {
-//        results[i] = get_batch_loss(picks, variables[i], temperature, picks.size());
-//    }
 #endif
     return results;
 }
@@ -547,7 +533,7 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
     std::uniform_int_distribution<size_t> crossover_selector(0, POPULATION_SIZE / 2 + POPULATION_SIZE % 2 - 1);
     std::uniform_int_distribution<size_t> pick_selector(0, picks.size() - 1);
     std::vector<Variables> population(POPULATION_SIZE);
-    std::vector<Pick> chosen_picks(PICKS_PER_GENERATION);
+    std::vector<Pick> chosen_picks{PICKS_PER_GENERATION};
     for (size_t i=0; i < POPULATION_SIZE; i++) population[i].ratings = INITIAL_RATINGS;
     for(size_t generation=0; generation < num_generations; generation++) {
         const auto start = std::chrono::high_resolution_clock::now();
@@ -568,13 +554,17 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         std::array<std::pair<std::size_t, std::array<double, 2>>, POPULATION_SIZE> indexed_losses;
         for (size_t i=0; i < POPULATION_SIZE; i++) indexed_losses[i] = {i, losses[i]};
         std::sort(indexed_losses.begin(), indexed_losses.end(),
-                  [](const auto& pair1, const auto& pair2){ return pair1.second[0] < pair2.second[0]; });
+                  [](const auto& pair1, const auto& pair2){
+                    if (std::isnan(pair1.second[0])) return false;
+                    else if (std::isnan(pair2.second[0])) return true;
+                    else return pair1.second[0] < pair2.second[0];
+                  });
         std::sort(losses.begin(), losses.end(), [](auto& arr1, auto& arr2){ return arr1[1] > arr2[1]; });
         std::array<double, 2> total_metrics = std::accumulate(losses.begin(), losses.end(), std::array<double, 2>{0, 0},
                                                               [](auto& arr1, auto& arr2)->std::array<double, 2>{ return {arr1[0] + arr2[0], arr1[1] + arr2[1]}; });
         std::cout << "Generation: " << generation << std::endl << "Best Loss: " << indexed_losses[0].second[0]
                   << " with Accuracy: " << indexed_losses[0].second[1] << std::endl
-                  << "Best Accuracy: " << losses[0][1] << " with Loss: " << losses[0][1] << std::endl
+                  << "Best Accuracy: " << losses[0][1] << " with Loss: " << losses[0][0] << std::endl
                   << "Average Loss: " << total_metrics[0] / POPULATION_SIZE << " with Average Accuracy: "
                   << total_metrics[1] / POPULATION_SIZE << std::endl;
         std::vector<Variables> temp_population(POPULATION_SIZE);
@@ -601,6 +591,7 @@ int main(const int argc, const char* argv[]) {
         return result_ptr;
     }();
     const std::vector<Pick> all_picks = load_picks("data/drafts/");
+    std::cout << "About to call optimize_variables" << std::endl;
     const Variables best_variables = optimize_variables(temperature, all_picks, generations, constants);
     save_variables(best_variables, "output/variables.json");
 }

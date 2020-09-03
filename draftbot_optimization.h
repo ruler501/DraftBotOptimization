@@ -15,7 +15,7 @@ constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
 constexpr size_t NUM_COLORS = 5;
-constexpr size_t POPULATION_SIZE = 128;
+constexpr size_t POPULATION_SIZE = 1;
 constexpr size_t MAX_PACK_SIZE = 32;
 constexpr size_t MAX_SEEN = 512;
 constexpr size_t MAX_PICKED = 128;
@@ -31,7 +31,7 @@ constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
 using Weights = std::array<std::array<float, PACK_SIZE>, PACKS>;
 using Colors = std::array<bool, NUM_COLORS>;
 using Lands = std::array<std::pair<Colors, size_t>, NUM_COMBINATIONS>;
-using ColorRequirement = std::array<std::pair<std::array<bool, 32>, size_t>, 5>;
+using ColorRequirement = std::pair<std::array<std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>, 5>, size_t>;
 using Embedding = std::array<float, EMBEDDING_SIZE>;
 using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
 
@@ -101,39 +101,46 @@ constexpr Lands DEFAULT_LANDS{{
                                       {{true, true, true, true, false}, 0},
                                       {{true, true, true, true, true}, 0},
                               }};
-constexpr std::array<Colors, 32> COLOR_COMBINATIONS{{
+constexpr std::array<Colors, NUM_COMBINATIONS> COLOR_COMBINATIONS{{
         {false, false, false, false, false},
-        {true, false, false, false, false},
+        {true, false, false, false, false}, // 1
         {false, true, false, false, false},
         {false, false, true, false, false},
         {false, false, false, true, false},
         {false, false, false, false, true},
-        {true, true, false, false, false},
+        {true, true, false, false, false}, // 6
         {false, true, true, false, false},
         {false, false, true, true, false},
         {false, false, false, true, true},
         {true, false, false, false, true},
-        {true, false, true, false, false},
+        {true, false, true, false, false}, // 11
         {false, true, false, true, false},
         {false, false, true, false, true},
         {true, false, false, true, false},
         {false, true, false, false, true},
-        {true, true, false, false, true},
+        {true, true, false, false, true}, // 16
         {true, true, true, false, false},
         {false, true, true, true, false},
         {false, false, true, true, true},
         {true, false, false, true, true},
-        {true, false, true, true, false},
+        {true, false, true, true, false}, // 21
         {false, true, false, true, true},
         {true, false, true, false, true},
         {true, true, false, true, false},
         {false, true, true, false, true},
-        {false, true, true, true, true},
+        {false, true, true, true, true}, // 26
         {true, false, true, true, true},
         {true, true, false, true, true},
         {true, true, true, false, true},
         {true, true, true, true, false},
-        {true, true, true, true, true},
+        {true, true, true, true, true}, // 31
+}};
+constexpr std::array<std::array<size_t, 16>, NUM_COLORS> INCLUSION_MAP{{
+    {1, 6,10, 11, 14, 16, 17, 20, 21, 23, 24, 27, 28, 29, 30, 31},
+    {2, 6, 7, 12, 15, 16, 17, 18, 22, 24, 25, 26, 28, 29, 30, 31},
+    {3, 7, 8, 11, 13, 17, 18, 19, 21, 23, 25, 26, 27, 29, 30, 31},
+    {4, 8, 9, 12, 14, 18, 19, 20, 21, 22, 24, 26, 27, 28, 30, 31},
+    {5, 9,10, 13, 15, 16, 19, 20, 22, 23, 25, 26, 27, 28, 29, 31},
 }};
 extern std::array<float, NUM_CARDS> INITIAL_RATINGS;
 
@@ -169,7 +176,7 @@ struct Constants {
     std::array<bool, NUM_CARDS> is_land{false};
     std::array<bool, NUM_CARDS> is_fetch{false};
     std::array<bool, NUM_CARDS> has_basic_land_types{false};
-    std::array<Embedding, NUM_CARDS> embeddings{{0}};
+    std::array<std::array<float, NUM_CARDS>, NUM_CARDS> similarities{{0}};
     CastingProbabilityTable prob_to_cast{{{{{{0}}}}}};
 };
 
