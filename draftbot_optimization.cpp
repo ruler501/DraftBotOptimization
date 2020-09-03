@@ -273,6 +273,10 @@ void populate_constants(const std::string& file_name, Constants& constants) {
             constants.embeddings[i] = {0};
         }
     }
+    float rating_max = 0.f;
+    for (size_t i=0; i < NUM_CARDS; i++) rating_max = std::max(rating_max, INITIAL_RATINGS[i]);
+    rating_max = 10 / rating_max;
+    for (size_t i=0; i < NUM_CARDS; i++) rating_max /= INITIAL_RATINGS[i];
     std::cout << "Done populating constants" << std::endl;
 }
 
@@ -652,9 +656,9 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
     return current_score;
 }
 
-double calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
+std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
     std::array<double, MAX_PACK_SIZE> scores{0};
-    std::array<float, MAX_PACK_SIZE> softmaxed{0};
+    std::array<double, MAX_PACK_SIZE> softmaxed{0};
     double denominator = 0;
     size_t num_valid_indices = pick.in_pack.size();
     for (size_t i=0; i < pick.in_pack.size(); i++) {
@@ -667,24 +671,29 @@ double calculate_loss(const Pick& pick, const Variables& variables, const float 
         scores[i] = EXP((double) do_climb(i, variables, pick, constants) / temperature);
         denominator += scores[i];
     }
-    for (size_t i=0; i < num_valid_indices; i++) softmaxed[i] = scores[i] / denominator;
+    double max_score = 0;
+    for (size_t i=0; i < num_valid_indices; i++) {
+        softmaxed[i] = scores[i] / denominator;
+        max_score = std::max(max_score, softmaxed[i]);
+    }
     for(size_t i=0; i < num_valid_indices; i++) {
         if (pick.in_pack[i] == pick.chosen_card) {
             if (softmaxed[i] >= 0) {
-                return -LOG(softmaxed[i]);
+                return std::pair<double, bool>(-LOG(softmaxed[i]), softmaxed[i] == max_score);
             } else {
-                return -1;
+                return std::pair<double, bool>(-1, false);
             }
         }
     }
-    return -2;
+    return std::pair<double, bool>(-2, false);
 }
 
 template<typename PickPtr>
-float get_batch_loss(const PickPtr picks, const Variables& variables, const float temperature, const size_t picks_size) {
+float get_batch_loss(const PickPtr picks, const Variables& variables, const float temperature, const size_t picks_size,
+                     const Constants& constants) {
     float sum_loss = 0;
     for (size_t i=0; i < picks_size; i++) {
-        const float pick_loss = calculate_loss(picks[i], variables, temperature);
+        const float pick_loss = calculate_loss(picks[i], variables, temperature, constants);
         if (pick_loss < 0) return -1;
         sum_loss += pick_loss;
     }
@@ -744,7 +753,7 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
             buffer<Variables, 1> inputBuffer(variables.data(), sycl::range<1>(POPULATION_SIZE));
             buffer<Pick, 1> picksBuffer(picks.data(), sycl::range<1>(picks.size()));
             buffer<Constants, 1> constantsBuffer(constants.get(), sycl::range<1>(1));
-            buffer<double, 2> outputBuffer{{POPULATION_SIZE, picksSize}};
+            buffer<std::pair<double, bool>, 2> outputBuffer{{POPULATION_SIZE, picksSize}};
 
             /* Submit a command_group to execute from the queue. */
             myQueue.submit([&](handler &cgh) {
@@ -768,11 +777,13 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
             auto readOutputPtr = outputBuffer.get_access<access::mode::read>();
             for (size_t i=0; i < POPULATION_SIZE; i++) {
                 double result = 0;
+                size_t count_correct = 0;
                 for (size_t j=0; j < picksSize; j++) {
-                    if (j % 1000 == 0 || readOutputPtr[i][j] < 0 || ISINF(readOutputPtr[i][j]) || j == 10606 || j == 10664 || j==11782 || j==11782) std::cout << i << "," << j << " " << readOutputPtr[i][j] << std::endl;
-                    result += readOutputPtr[i][j];
+//                    if (j % 1000 == 0 || readOutputPtr[i][j].first < 0 || ISINF(readOutputPtr[i][j].first) || j == 10606 || j == 10664 || j==11782 || j==11782) std::cout << i << "," << j << " " << readOutputPtr[i][j].first << "," << readOutputPtr[i][j].second << std::endl;
+                    result += readOutputPtr[i][j].first;
+                    if (readOutputPtr[i][j].second) count_correct++;
                 }
-                std::cout << result << std::endl;
+                std::cout << "Generation " << i << ": " << result / picksSize << "," << count_correct / (double)picksSize << std::endl;
                 results[i] = result / picksSize;
             }
         }
@@ -788,7 +799,9 @@ std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>
     std::array<std::thread, POPULATION_SIZE> threads;
     for (size_t i=0; i < POPULATION_SIZE; i++) {
         std::packaged_task<float()> task(
-                [&variables, i, &picks, temperature] { return get_batch_loss(picks, variables[i], temperature, picks.size()); }); // wrap the function
+                [&variables, i, &picks, temperature, &constants] {
+                    return get_batch_loss(picks, variables[i], temperature, picks.size(), *constants);
+                }); // wrap the function
         futures[i] = std::move(task.get_future());  // get a future
         std::thread t(std::move(task)); // launch on a thread
         threads[i] = std::move(t);
@@ -834,7 +847,7 @@ Weights crossover_weights(const Weights& weights1, const Weights& weights2, std:
     Weights result = weights1;
     for (size_t pack=0; pack < PACKS; pack++) {
         for (size_t pick=0; pick < PACK_SIZE; pick++) {
-            if (coin(gen) == 1) result[pack][pick] = weights2[pack][pick];
+            result[pack][pick] = (weights1[pack][pick] + weights2[pack][pick]) / 2;
         }
     }
     return result;
@@ -849,21 +862,19 @@ Variables crossover_variables(const Variables& variables1, const Variables& vari
     result.internal_synergy_weights = crossover_weights(variables1.internal_synergy_weights, variables2.fixing_weights, gen);
     result.openness_weights = crossover_weights(variables1.openness_weights, variables2.openness_weights, gen);
     result.colors_weights = crossover_weights(variables1.colors_weights, variables2.colors_weights, gen);
-    if (coin(gen) == 1) result.prob_to_include = variables2.prob_to_include;
-    if (coin(gen) == 1) {
-        result.similarity_clip = variables2.similarity_clip;
-        result.similarity_multiplier = variables2.similarity_multiplier;
-    }
-    for (size_t i=0; i < NUM_CARDS; i++) if (coin(gen)) result.ratings[i] = variables2.ratings[i];
+    result.prob_to_include = (variables1.prob_to_include + variables2.prob_to_include) / 2;
+    result.similarity_clip = (variables1.similarity_clip + variables2.similarity_clip) / 2;
+    result.similarity_multiplier = 1 / (1 - result.similarity_clip);
+    for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = (variables1.ratings[i] + variables2.ratings[i]) / 2;
     return result;
 }
 
 Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
-    std::normal_distribution<float> std_dev_2{0, 2.0};
-    std::uniform_int_distribution<size_t> int_distribution(0, 14);
+    std::normal_distribution<float> std_dev_1{0, 1.0};
+    std::uniform_int_distribution<size_t> int_distribution(0, 4);
     for (auto& pack : weights) {
         for (float& weight : pack) {
-            if (int_distribution(gen) == 0) weight += std_dev_2(gen);
+            if (int_distribution(gen) == 0) weight += std_dev_1(gen);
         }
     }
     return weights;
@@ -872,8 +883,8 @@ Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
 Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
     std::normal_distribution<float> std_dev_005{0, 0.05f};
     std::normal_distribution<float> std_dev_05{0, 0.5f};
-    std::uniform_int_distribution<size_t> int_distribution(0, 9);
-    std::uniform_int_distribution<size_t> int_distribution2(0, 44);
+    std::uniform_int_distribution<size_t> int_distribution(0, 4);
+    std::uniform_int_distribution<size_t> int_distribution2(0, 9);
     mutate_weights(variables.rating_weights, gen);
     mutate_weights(variables.pick_synergy_weights, gen);
     mutate_weights(variables.fixing_weights, gen);
@@ -889,8 +900,11 @@ Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
         variables.similarity_clip = std::max(std::min(variables.similarity_clip, 0.99f), 0.f);
         variables.similarity_multiplier = 1 / (1 - variables.similarity_clip);
     }
-    for (float& rating : variables.ratings) {
-        if(int_distribution2(gen) == 0) rating += std_dev_05(gen);
+    for (size_t i=0; i < NUM_CARDS; i++) {
+        if(int_distribution2(gen) == 0) {
+            variables.ratings[i] += std_dev_05(gen);
+            variables.ratings[i] = std::max(std::min(10.f, variables.ratings[i]), 0.f);
+        }
     }
     return variables;
 }
