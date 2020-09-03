@@ -407,16 +407,18 @@ function(add_sycl_to_target)
 
   # If the CXX compiler is set to compute++ enable the driver.
   get_filename_component(cmakeCxxCompilerFileName "${CMAKE_CXX_COMPILER}" NAME)
-  if("${cmakeCxxCompilerFileName}" STREQUAL "compute++")
+  if("${cmakeCxxCompilerFileName}" STREQUAL "compute++.exe")
     if(MSVC)
       message(FATAL_ERROR "The compiler driver is not supported by this system,
                            revert the CXX compiler to your default host compiler.")
     endif()
+    message("Adding sycl-driver")
 
     get_target_property(includeAfter ${SDK_ADD_SYCL_TARGET} COMPUTECPP_INCLUDE_AFTER)
     if(includeAfter)
       list(APPEND COMPUTECPP_USER_FLAGS -fsycl-ih-last)
     endif()
+    list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
     list(INSERT COMPUTECPP_DEVICE_COMPILER_FLAGS 0 -sycl-driver)
     # Prepend COMPUTECPP_DEVICE_COMPILER_FLAGS and append COMPUTECPP_USER_FLAGS
     foreach(prop COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)

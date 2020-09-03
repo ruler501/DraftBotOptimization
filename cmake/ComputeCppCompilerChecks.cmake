@@ -31,6 +31,7 @@ if(MSVC)
       COMMAND ${ComputeCpp_DEVICE_COMPILER_EXECUTABLE}
               ${COMPUTECPP_DEVICE_COMPILER_FLAGS}
               -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+              -D__CUDACC__
               -isystem ${ComputeCpp_INCLUDE_DIRS}
               -o ${ComputeCpp_STL_CHECK_SRC}.cpp.sycl
               -c ${ComputeCpp_STL_CHECK_SRC}.cpp
@@ -42,7 +43,7 @@ if(MSVC)
       message(STATUS "Device compiler cannot consume hosted STL headers. Using any parts of the STL will likely result in device compiler errors.")
     else()
     message(STATUS "Device compiler does not meet certain STL version requirements. Disabling version checks and hoping for the best.")
-      list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
+      list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D__CUDACC__ -sycl-driver)
     endif()
   endif()
   file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/${ComputeCpp_STL_CHECK_SRC}.cpp

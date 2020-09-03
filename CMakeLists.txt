@@ -53,6 +53,6 @@ if (MSVC)
 target_link_options(DraftBotOptimization PRIVATE /PROFILE)
 endif()
 
-set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 20
+set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 11
                                                        CXX_STANDARD_REQUIRED ON
                                                        CXX_EXTENSIONS OFF)

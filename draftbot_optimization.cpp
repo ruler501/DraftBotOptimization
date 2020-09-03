@@ -37,7 +37,7 @@ constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
 constexpr size_t NUM_COLORS = 5;
-constexpr size_t POPULATION_SIZE = 32;
+constexpr size_t POPULATION_SIZE = 128;
 constexpr size_t MAX_PACK_SIZE = 32;
 constexpr size_t MAX_SEEN = 512;
 constexpr size_t MAX_PICKED = 128;
@@ -48,7 +48,7 @@ using Colors = std::array<bool, NUM_COLORS>;
 using Lands = std::array<std::pair<Colors, size_t>, NUM_COMBINATIONS>;
 using ColorRequirement = std::array<std::pair<Colors, size_t>, 5>;
 using Embedding = std::array<float, EMBEDDING_SIZE>;
-using CastingProbabilityTable = std::vector<std::vector<std::vector<std::vector<std::vector<std::vector<float>>>>>>;
+using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, 18>, 18>, 18>, 4>, 7>, 9>;
 
 constexpr Weights INITIAL_RATING_WEIGHTS{{
                                                  {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
@@ -126,7 +126,7 @@ struct Variables {
     Weights internal_synergy_weights = INITIAL_INTERNAL_SYNERGY_WEIGHTS;
     Weights pick_synergy_weights = INITIAL_PICK_SYNERGY_WEIGHTS;
     Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
-    std::vector<float> ratings{NUM_CARDS, 1};
+    std::array<float, NUM_CARDS> ratings{1};
     float prob_to_include = INITIAL_PROB_TO_INCLUDE;
     float similarity_clip = INITIAL_SIMILARITY_CLIP;
     float similarity_multiplier = 1 / (1 - INITIAL_SIMILARITY_CLIP);
@@ -152,8 +152,11 @@ struct Pick {
         auto _seen = pick_json["seen"].get<std::vector<size_t>>();
         auto _picked = pick_json["picked"].get<std::vector<size_t>>();
         for (size_t i=0; i < _in_pack.size(); i++) in_pack[i] = _in_pack[i];
+        for (size_t i=_in_pack.size(); i < in_pack.size(); i++) in_pack[i] = std::numeric_limits<size_t>::max();
         for (size_t i=0; i < _seen.size(); i++) seen[i] = _seen[i];
+        for (size_t i=_seen.size(); i < seen.size(); i++) seen[i] = std::numeric_limits<size_t>::max();
         for (size_t i=0; i < _picked.size(); i++) picked[i] = _picked[i];
+        for (size_t i=_picked.size(); i < picked.size(); i++) picked[i] = std::numeric_limits<size_t>::max();
     }
 };
 
@@ -252,7 +255,8 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         ColorRequirement color_requirement{{{{false, false, false, false, false}, 0}}};
         size_t index = 0;
         for (const auto& pair : color_requirement_map) {
-            color_requirement[index++] = pair;
+            color_requirement[index] = pair;
+            index += 1;
         }
         constants.color_requirements[i] = color_requirement;
         const auto elo_iter = card.find("elo");
@@ -280,27 +284,45 @@ void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
     std::cout << "populating prob_to_cast" << std::endl;
     for (const auto& item : data.items()) {
         const size_t cmc = std::stoi(item.key());
-        while (constants.prob_to_cast.size() < cmc + 1) constants.prob_to_cast.emplace_back();
+        if (constants.prob_to_cast.size() < cmc + 1) {
+            std::cerr << "Too big index at depth 0: " << cmc << std::endl;
+            continue;
+        }
         auto& inner1 = constants.prob_to_cast[cmc];
         for (const auto& item2 : item.value().items()) {
             const size_t required_a = std::stoi(item2.key());
-            while(inner1.size() < required_a + 1) inner1.emplace_back();
+            if (inner1.size() < required_a + 1) {
+                std::cerr << "Too big index at depth 1: " << required_a << std::endl;
+                continue;
+            }
             auto& inner2 = inner1[required_a];
             for (const auto& item3 : item2.value().items()) {
                 const size_t required_b = std::stoi(item3.key());
-                while(inner2.size() < required_b + 1) inner2.emplace_back();
+                if(inner2.size() < required_b + 1) {
+                    std::cerr << "Too big index at depth 2: " << required_b << std::endl;
+                    continue;
+                }
                 auto& inner3 = inner2[required_b];
                 for (const auto& item4 : item3.value().items()) {
                     const size_t land_count_a = std::stoi(item4.key());
-                    while (inner3.size() < land_count_a + 1) inner3.emplace_back();
+                    if (inner3.size() < land_count_a + 1) {
+                        std::cerr << "Too big index at depth 3: " << land_count_a << std::endl;
+                        continue;
+                    }
                     auto& inner4 = inner3[land_count_a];
                     for (const auto& item5 : item4.value().items()) {
                         const size_t land_count_b = std::stoi(item5.key());
-                        while (inner4.size() < land_count_b + 1) inner4.emplace_back();
+                        if (inner4.size() < land_count_b + 1) {
+                            std::cerr << "Too big index at depth 4: " << land_count_b << std::endl;
+                            continue;
+                        }
                         auto& inner5 = inner4[land_count_b];
                         for (const auto& item6 : item5.value().items()) {
                             const size_t land_count_ab = std::stoi(item6.key());
-                            while (inner5.size() < land_count_ab + 1) inner5.emplace_back();
+                            if (inner5.size() < land_count_ab + 1) {
+                                std::cerr << "Too big index at depth 5: " << land_count_ab << std::endl;
+                                continue;
+                            }
                             inner5[land_count_ab] = item6.value().get<float>();
                         }
                     }
@@ -309,13 +331,6 @@ void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
         }
     }
 }
-
-const Constants CONSTANTS = [](){ // NOLINT(cert-err58-cpp)
-    Constants result;
-    populate_constants("data/intToCard.json", result);
-    populate_prob_to_cast("data/probTable.json", result);
-    return result;
-}();
 
 float interpolate_weights(const Weights& weights, const Pick& pick) {
     const float x_index = PACKS * (float)pick.pack_num / (float)pick.packs;
@@ -339,10 +354,10 @@ float interpolate_weights(const Weights& weights, const Pick& pick) {
     return XY * XY_weight + Xy * Xy_weight + xY * xY_weight + xy * xy_weight;
 }
 
-float get_prob_to_cast(size_t cmc, size_t requiredA, size_t requiredB, size_t land_count_a, size_t land_count_b,
-                       size_t land_count_ab) {
-    if (CONSTANTS.prob_to_cast.size() > cmc) {
-        const auto& inner1 = CONSTANTS.prob_to_cast[cmc];
+float get_prob_to_cast(const size_t cmc, const size_t requiredA, const size_t requiredB, const size_t land_count_a,
+                       const size_t land_count_b, const size_t land_count_ab, const Constants& constants) {
+    if (constants.prob_to_cast.size() > cmc) {
+        const auto& inner1 = constants.prob_to_cast[cmc];
         if (inner1.size() > requiredA) {
             const auto& inner2 = inner1[requiredA];
             if (inner2.size() > requiredB) {
@@ -369,17 +384,18 @@ bool does_intersect(const Colors& a, const Colors& b) {
     return false;
 }
 
-float get_casting_probability(const Lands& lands, const size_t card_index) {
-    const ColorRequirement &color_requirement = CONSTANTS.color_requirements[card_index];
+float get_casting_probability(const Lands& lands, const size_t card_index, const Constants& constants) {
+    const ColorRequirement &color_requirement = constants.color_requirements[card_index];
     size_t num_requirements = 5;
     for (size_t i = 0; i < color_requirement.size(); i++) {
+        return color_requirement[i].second;
         if (color_requirement[i].second == 0) {
             num_requirements = i;
             break;
         }
     }
     if (num_requirements == 0) {
-        return 0;
+        return 1;
     } else if (num_requirements < 3) {
         const std::pair<Colors, size_t>& first_requirement = color_requirement[0];
         Colors color_a = first_requirement.first;
@@ -406,23 +422,22 @@ float get_casting_probability(const Lands& lands, const size_t card_index) {
             const std::pair<Colors, size_t>& entry = lands[i];
             bool intersection_a = does_intersect(color_a, entry.first);
             bool intersection_b = does_intersect(color_b, entry.first);
-            if(!intersection_a && intersection_b) {
-                land_count_a++;
-            } else if(intersection_a && !intersection_b) {
-                land_count_b++;
+            if(intersection_a && !intersection_b) {
+                land_count_a += entry.second;
+            } else if(!intersection_a && intersection_b) {
+                land_count_b += entry.second;
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "ConstantConditionsOC"
-            } else if(!intersection_a && !intersection_b) {
-                land_count_ab++;
+            } else if(intersection_a && intersection_b) {
+                land_count_ab += entry.second;
             }
 #pragma clang diagnostic pop
         }
-        const size_t cmc = CONSTANTS.cmcs[card_index];
-        return get_prob_to_cast(cmc, required_a, required_b, land_count_a, land_count_b, land_count_ab);
+        return get_prob_to_cast(constants.cmcs[card_index], required_a, required_b, land_count_a, land_count_b, land_count_ab, constants);
     } else {
         size_t total_devotion = 0;
         float probability = 1.f;
-        const size_t cmc = CONSTANTS.cmcs[card_index];
+        const size_t cmc = constants.cmcs[card_index];
         for (size_t i=0; i < num_requirements; i++) {
             const std::pair<Colors, size_t>& entry = color_requirement[i];
             total_devotion += entry.second;
@@ -434,7 +449,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index) {
                     land_count += entry2.second;
                 }
             }
-            probability *= get_prob_to_cast(cmc, entry.second, 0, land_count, 0, 0);
+            probability *= get_prob_to_cast(cmc, entry.second, 0, land_count, 0, 0, constants);
         }
         size_t land_count = 0;
         for (size_t i=0; i < NUM_COMBINATIONS; i++) {
@@ -448,7 +463,7 @@ float get_casting_probability(const Lands& lands, const size_t card_index) {
                 }
             }
         }
-        return probability * get_prob_to_cast(cmc, total_devotion, 0, land_count, 0, 0);
+        return probability * get_prob_to_cast(cmc, total_devotion, 0, land_count, 0, 0, constants);
     }
 }
 
@@ -470,12 +485,13 @@ float calculate_synergy(const Embedding& embedding1, const Embedding& embedding2
     else return transformed;
 }
 
-float rating_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick) {
+float rating_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
     const size_t real_card_index = pick.in_pack[card_index];
-    return get_casting_probability(lands, real_card_index) * variables.ratings[real_card_index];
+    return get_casting_probability(lands, real_card_index, constants) * variables.ratings[real_card_index];
 }
 
-float pick_synergy_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick) {
+float pick_synergy_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
+                          const Constants& constants) {
     size_t num_valid_indices = pick.picked.size();
     for (size_t i=0; i < pick.picked.size(); i++) {
         if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
@@ -485,23 +501,23 @@ float pick_synergy_oracle(const size_t card_index, const Lands& lands, const Var
     }
     if (num_valid_indices == 0) return 0;
     float total_synergy = 0;
-    const Embedding& embedding = CONSTANTS.embeddings[pick.in_pack[card_index]];
+    const Embedding& embedding = constants.embeddings[pick.in_pack[card_index]];
     for (size_t i=0; i < num_valid_indices; i++) {
         const size_t card = pick.picked[i];
-        const float probability = get_casting_probability(lands, card);
+        const float probability = get_casting_probability(lands, card, constants);
         if (probability >= variables.prob_to_include) {
-            total_synergy += probability * calculate_synergy(embedding, CONSTANTS.embeddings[card], variables);
+            total_synergy += probability * calculate_synergy(embedding, constants.embeddings[card], variables);
         }
     }
-    return total_synergy * get_casting_probability(lands, pick.in_pack[card_index]) / pick.picked.size();
+    return total_synergy * get_casting_probability(lands, pick.in_pack[card_index], constants) / num_valid_indices;
 }
 
-float fixing_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick) {
+float fixing_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
     const size_t card_real_index = pick.in_pack[card_index];
-    if (CONSTANTS.is_land[card_real_index]) {
+    if (constants.is_land[card_real_index]) {
         float overlap = 0;
         for (size_t i=0; i < NUM_COLORS; i++){
-            if (CONSTANTS.card_colors[card_real_index][i]) {
+            if (constants.card_colors[card_real_index][i]) {
                 size_t count = 0;
                 for (size_t j=0; j < NUM_COMBINATIONS; j++) if (lands[j].first[i]) count += lands[j].second;
                 if (count > 2) {
@@ -509,13 +525,13 @@ float fixing_oracle(const size_t card_index, const Lands& lands, const Variables
                 }
             }
         }
-        if (CONSTANTS.is_fetch[card_real_index]) return overlap;
-        else if (CONSTANTS.has_basic_land_types[card_real_index]) return 0.75f * overlap;
+        if (constants.is_fetch[card_real_index]) return overlap;
+        else if (constants.has_basic_land_types[card_real_index]) return 0.75f * overlap;
         else return 0.5f * overlap;
     } else return 0;
 }
 
-float internal_synergy_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick) {
+float internal_synergy_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
     size_t num_valid_indices = pick.picked.size();
     for (size_t i=0; i < pick.picked.size(); i++) {
         if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
@@ -526,27 +542,27 @@ float internal_synergy_oracle(const size_t, const Lands& lands, const Variables&
     if (num_valid_indices < 2) return 0;
     float internal_synergy = 0;
     std::array<float, MAX_PICKED> probabilities{0};
-    for (size_t i=0; i < num_valid_indices; i++) probabilities[i] = get_casting_probability(lands, pick.picked[i]);
+    for (size_t i=0; i < num_valid_indices; i++) probabilities[i] = get_casting_probability(lands, pick.picked[i], constants);
     for(size_t i=0; i < num_valid_indices; i++) {
         const float probability = probabilities[i];
         if (probability >= variables.prob_to_include) {
-            const Embedding& embedding = CONSTANTS.embeddings[pick.picked[i]];
+            const Embedding& embedding = constants.embeddings[pick.picked[i]];
             float card_synergy = 0;
             for (size_t j = 0; j < i; j++) {
                 const float probability2 = probabilities[j];
                 if (probability2 >= variables.prob_to_include) {
-                    card_synergy += probability2 * calculate_synergy(embedding, CONSTANTS.embeddings[pick.picked[j]], variables);
+                    card_synergy += probability2 * calculate_synergy(embedding, constants.embeddings[pick.picked[j]], variables);
                 }
             }
             internal_synergy += probability * card_synergy;
         }
     }
-    return internal_synergy / (float)(pick.picked.size() * (pick.picked.size() + 1));
+    return internal_synergy / (float)(num_valid_indices * (num_valid_indices + 1));
 }
 
 template<size_t Size>
-float sum_gated_rating(const Lands& lands, const Variables& variables, const std::array<size_t, Size>& indices) {
-    float result = 0;
+float sum_gated_rating(const Lands& lands, const Variables& variables, const std::array<size_t, Size>& indices,
+                       const Constants& constants) {
     size_t num_valid_indices = indices.size();
     for (size_t i=0; i < indices.size(); i++) {
         if (indices[i] == std::numeric_limits<size_t>::max()) {
@@ -554,44 +570,52 @@ float sum_gated_rating(const Lands& lands, const Variables& variables, const std
             break;
         }
     }
+    float result = 0;
     for (size_t i=0; i < num_valid_indices; i++) {
         const size_t index = indices[i];
-        const float probability = get_casting_probability(lands, index);
+        const float probability = get_casting_probability(lands, index, constants);
         if (probability >= variables.prob_to_include) {
             result += variables.ratings[index] * probability;
         }
     }
-    return result;
+    return result / indices.size();
 }
 
-float openness_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick) {
-    return sum_gated_rating(lands, variables, pick.seen);
+float openness_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
+    return sum_gated_rating(lands, variables, pick.seen, constants);
 }
 
-float colors_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick) {
-    return sum_gated_rating(lands, variables, pick.picked);
+float colors_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
+    return sum_gated_rating(lands, variables, pick.picked, constants);
 }
 
 float get_score(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
                 const float rating_weight, const float pick_synergy_weight, const float fixing_weight,
-                const float internal_synergy_weight, const float openness_weight, const float colors_weight) {
-    const float rating_score = rating_oracle(card_index, lands, variables, pick);
+                const float internal_synergy_weight, const float openness_weight, const float colors_weight,
+                const Constants& constants) {
+    const float rating_score = rating_oracle(card_index, lands, variables, pick, constants);
+//    return rating_score*rating_weight;
 //     std::cout << rating_score << "*" << rating_weight;
-    const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick);
+    const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick, constants);
+//    return pick_synergy_score*pick_synergy_weight;
 //     std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
-    const float fixing_score = fixing_oracle(card_index, lands, variables, pick);
+    const float fixing_score = fixing_oracle(card_index, lands, variables, pick, constants);
+//    return fixing_score*fixing_weight;
 //     std::cout << " + " << fixing_score << "*" << fixing_weight;
-    const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick);
+    const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick, constants);
+//    return internal_synergy_score*internal_synergy_weight;
 //     std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
-    const float openness_score = openness_oracle(card_index, lands, variables, pick);
+    const float openness_score = openness_oracle(card_index, lands, variables, pick, constants);
+//    return openness_score*openness_weight;
 //     std::cout << " + " << openness_score << "*" << openness_weight;
-    const float colors_score = colors_oracle(card_index, lands, variables, pick);
+    const float colors_score = colors_oracle(card_index, lands, variables, pick, constants);
+//    return colors_score*colors_weight;
 //     std::cout << " + " << colors_score << "*" << colors_weight << std::endl;
     return rating_score*rating_weight + pick_synergy_score*pick_synergy_weight + fixing_score*fixing_weight
            + internal_synergy_score*internal_synergy_weight + openness_score*openness_weight + colors_score*colors_weight;
 }
 
-float do_climb(const size_t card_index, const Variables& variables, const Pick& pick) {
+float do_climb(const size_t card_index, const Variables& variables, const Pick& pick, const Constants& constants) {
     float previous_score = -1;
     float current_score = 0;
     const float rating_weight = interpolate_weights(variables.rating_weights, pick);
@@ -607,11 +631,13 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
             if (lands[remove_index].second > 0) {
                 bool breakout = false;
                 for (size_t add_index=1; add_index < COLORS.size() + 1; add_index++) {
+                    if (add_index == remove_index) continue;
                     Lands new_lands = lands;
                     new_lands[remove_index].second -= 1;
                     new_lands[add_index].second += 1;
                     float score = get_score(card_index, new_lands, variables, pick, rating_weight, pick_synergy_weight,
-                                            fixing_weight, internal_synergy_weight, openness_weight, colors_weight);
+                                            fixing_weight, internal_synergy_weight, openness_weight, colors_weight,
+                                            constants);
                     if (score > current_score) {
                         current_score = score;
                         lands = new_lands;
@@ -626,7 +652,7 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
     return current_score;
 }
 
-float calculate_loss(const Pick& pick, const Variables& variables, const float temperature) {
+double calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
     std::array<double, MAX_PACK_SIZE> scores{0};
     std::array<float, MAX_PACK_SIZE> softmaxed{0};
     double denominator = 0;
@@ -638,34 +664,20 @@ float calculate_loss(const Pick& pick, const Variables& variables, const float t
         }
     }
     for (size_t i=0; i < num_valid_indices; i++) {
-        try {
-            scores[i] = EXP((double) do_climb(i, variables, pick) / temperature);
-        } catch (std::exception& exc) {
-            std::cerr << exc.what() << std::endl;
-        }
+        scores[i] = EXP((double) do_climb(i, variables, pick, constants) / temperature);
         denominator += scores[i];
     }
-    for (size_t i=0; i < num_valid_indices; i++) softmaxed[i] = (float)(scores[i] / denominator);
-    size_t match_count = 0;
-    std::array<bool, MAX_PACK_SIZE> match_picked{false};
-    for (size_t i=0; i < num_valid_indices; i++) {
-        if (pick.in_pack[i] == pick.chosen_card) {
-            match_picked[i] = true;
-            match_count++;
-        }
-    }
-    const float matched_weight = 1.f / match_count;
-    float loss = 0;
+    for (size_t i=0; i < num_valid_indices; i++) softmaxed[i] = scores[i] / denominator;
     for(size_t i=0; i < num_valid_indices; i++) {
-        if (match_picked[i]) {
-            if (scores[i] > 0) {
-                loss += matched_weight * LOG(softmaxed[i]);
+        if (pick.in_pack[i] == pick.chosen_card) {
+            if (softmaxed[i] >= 0) {
+                return -LOG(softmaxed[i]);
             } else {
-                return 0;
+                return -1;
             }
         }
     }
-    return -loss;
+    return -2;
 }
 
 template<typename PickPtr>
@@ -681,12 +693,14 @@ float get_batch_loss(const PickPtr picks, const Variables& variables, const floa
 
 class calculate_batch_loss;
 
-std::array<float, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
-                                                   const std::vector<Pick>& picks, const float temperature) {
-    std::array<float, POPULATION_SIZE> results{0};
+std::array<double, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
+                                                   const std::vector<Pick>& picks, const float temperature,
+                                                   const std::shared_ptr<const Constants> constants) {
+    std::array<double, POPULATION_SIZE> results{0};
 #ifdef USE_SYCL
     using namespace cl::sycl;
     try {
+        std::vector<float> output(POPULATION_SIZE * picks.size(), 42);
         const std::size_t plat_index = 1;
         const std::size_t dev_index = std::numeric_limits<std::size_t>::max();
         const auto dev_type = cl::sycl::info::device_type::gpu;
@@ -726,29 +740,42 @@ std::array<float, POPULATION_SIZE> run_simulations(const std::vector<Variables>&
 
         /* Create a scope to control data synchronisation of buffer objects. */
         {
+            size_t picksSize = picks.size();
             buffer<Variables, 1> inputBuffer(variables.data(), sycl::range<1>(POPULATION_SIZE));
             buffer<Pick, 1> picksBuffer(picks.data(), sycl::range<1>(picks.size()));
-            buffer<float, 1> outputBuffer(results.data(), sycl::range<1>(POPULATION_SIZE));
-            size_t picksSize = picks.size();
+            buffer<Constants, 1> constantsBuffer(constants.get(), sycl::range<1>(1));
+            buffer<double, 2> outputBuffer{{POPULATION_SIZE, picksSize}};
 
             /* Submit a command_group to execute from the queue. */
             myQueue.submit([&](handler &cgh) {
-
                 /* Create accessors for accessing the input and output data within the
                  * kernel. */
                 auto inputPtr = inputBuffer.get_access<access::mode::read>(cgh);
                 auto pickPtr = picksBuffer.get_access<access::mode::read>(cgh);
+                auto constantsPtr = constantsBuffer.get_access<access::mode::read>(cgh);
                 auto outputPtr = outputBuffer.get_access<access::mode::write>(cgh);
 
-                cgh.parallel_for<class calculate_batch_loss>(sycl::range<1>(POPULATION_SIZE),
-                                                             [=](cl::sycl::id<1> wiID) {
-                                                                 outputPtr[wiID] = get_batch_loss(pickPtr, inputPtr[wiID], temperature, picksSize);
+                cgh.parallel_for<class calculate_batch_loss>(sycl::range<2>(POPULATION_SIZE, picks.size()),
+                                                             [=](cl::sycl::id<2> wiID) {
+                                                                const Variables& variables = inputPtr[wiID[0]];
+                                                                const Pick& pick = pickPtr[wiID[1]];
+                                                                const Constants& constants = constantsPtr[0];
+                                                                outputPtr[wiID] = calculate_loss(pick, variables, temperature, constants);
                                                              }
                 );
             });
             myQueue.wait();
+            auto readOutputPtr = outputBuffer.get_access<access::mode::read>();
+            for (size_t i=0; i < POPULATION_SIZE; i++) {
+                double result = 0;
+                for (size_t j=0; j < picksSize; j++) {
+                    if (j % 1000 == 0 || readOutputPtr[i][j] < 0 || ISINF(readOutputPtr[i][j]) || j == 10606 || j == 10664 || j==11782 || j==11782) std::cout << i << "," << j << " " << readOutputPtr[i][j] << std::endl;
+                    result += readOutputPtr[i][j];
+                }
+                std::cout << result << std::endl;
+                results[i] = result / picksSize;
+            }
         }
-
     } catch (exception& e) {
 
         /* In the case of an exception being throw, print the error message and
@@ -868,21 +895,15 @@ Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
     return variables;
 }
 
-Variables optimize_variables(const float temperature, const std::vector<Pick>& picks, const size_t num_generations) {
-    std::cout << "Beginning optimize_variables" << std::endl;
+Variables optimize_variables(const float temperature, const std::vector<Pick>& picks, const size_t num_generations,
+                             const std::shared_ptr<const Constants>& constants) {
+    std::cout << "Beginning optimize_variables with population size of " << POPULATION_SIZE << std::endl;
     std::random_device rd{};
     std::mt19937_64 gen{rd()};
     const std::uniform_int_distribution<size_t> crossover_selector(0, POPULATION_SIZE / 2 + POPULATION_SIZE % 2 - 1);
     std::vector<Variables> population(POPULATION_SIZE);
-    std::cout << "Initializing population_indices" << std::endl;
-    std::array<size_t, POPULATION_SIZE> population_indices{0};
-    std::vector<float> initial_ratings_vector(INITIAL_RATINGS.begin(), INITIAL_RATINGS.end());
-    std::cout << "Ratings size: " << initial_ratings_vector.size();
-    for (size_t i=0; i < POPULATION_SIZE; i++) {
-        population_indices[i] = i;
-        population[i].ratings = initial_ratings_vector;
-    }
-    for(int generation=0; generation < num_generations; generation++) {
+    for (size_t i=0; i < POPULATION_SIZE; i++) population[i].ratings = INITIAL_RATINGS;
+    for(size_t generation=0; generation < num_generations; generation++) {
         std::cout << "Beginning crossover" << std::endl;
         for (size_t i=0; i < POPULATION_SIZE / 2 + POPULATION_SIZE % 2; i++) {
             size_t index1 = crossover_selector(gen);
@@ -895,11 +916,11 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         }
         std::cout << "Beginning calculating losses" << std::endl;
         const auto start = std::chrono::high_resolution_clock::now();
-        std::array<float, POPULATION_SIZE> losses = run_simulations(population, picks, temperature);
+        std::array<double, POPULATION_SIZE> losses = run_simulations(population, picks, temperature, constants);
         const auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff = end - start;
         std::cout << "Generation took " << diff.count() << " seconds" << std::endl;
-        std::array<std::pair<std::size_t, float>, POPULATION_SIZE> indexed_losses;
+        std::array<std::pair<std::size_t, double>, POPULATION_SIZE> indexed_losses;
         for (size_t i=0; i < POPULATION_SIZE; i++) indexed_losses[i] = {i, losses[i]};
         std::sort(indexed_losses.begin(), indexed_losses.end(),
                   [](const auto& pair1, const auto& pair2){ return pair1.second < pair2.second; });
@@ -915,11 +936,18 @@ int main(const int argc, const char* argv[]) {
     if (argc != 3) {
         return -1;
     }
+    std::cout.precision(20);
     const float temperature = std::strtof(argv[1], nullptr);
     const size_t generations = std::strtoull(argv[2], nullptr, 10);
+    const std::shared_ptr<const Constants> constants = [](){ // NOLINT(cert-err58-cpp)
+        std::shared_ptr<Constants> result_ptr = std::make_shared<Constants>();
+        populate_constants("data/intToCard.json", *result_ptr);
+        populate_prob_to_cast("data/probTable.json", *result_ptr);
+        return result_ptr;
+    }();
     const std::vector<Pick> all_picks = load_picks("data/drafts/");
     std::cout << "created all_picks" << std::endl;
-    const Variables best_variables = optimize_variables(temperature, all_picks, generations);
+    const Variables best_variables = optimize_variables(temperature, all_picks, generations, constants);
     nlohmann::json result;
     result["ratingWeights"] = best_variables.rating_weights;
     result["pickSynergyWeights"] = best_variables.pick_synergy_weights;
@@ -934,4 +962,3 @@ int main(const int argc, const char* argv[]) {
     output_file << result;
 }
 #pragma clang diagnostic pop
-
