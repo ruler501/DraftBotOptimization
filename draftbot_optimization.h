@@ -7,34 +7,85 @@
 #include <array>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+// Algorithmic Hyperparameters
+constexpr float MAX_SCORE = 10.f;
+constexpr float MIN_WEIGHT = -10.f;
+constexpr float MAX_WEIGHT = 30.f;
+
+// Output Parameters
+constexpr size_t WIDTH = 5;
+constexpr size_t PRECISION = 5;
+
+// Performance Parameters
+constexpr size_t PICKS_PER_OPENCL_THREAD = 8;
+
+// Optimization Hyperparameters
+constexpr size_t POPULATION_SIZE = (34 + 24) * 2;
+constexpr size_t KEEP_BEST = 50;
+constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
+constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.25;
+constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 5.0;
+
+// Genetic Algorithm Hyperparameters
+constexpr float WEIGHT_VOLATILITY = (MAX_WEIGHT - MIN_WEIGHT) / 20;
+constexpr float CLIP_VOLATILITY = 1 / 20.f;
+constexpr float RATING_VOLATILITY = MAX_SCORE / 40;
+constexpr float MULTIPLIER_VOLATILITY = 1 / 20.f;
+constexpr size_t WEIGHT_INV_PROB_TO_CHANGE = 10;
+constexpr size_t CLIP_INV_PROB_TO_CHANGE = 10;
+constexpr size_t RATING_INV_PROB_TO_CHANGE = 5;
+constexpr size_t MULTIPLIER_INV_PROB_TO_CHANGE = 10;
+constexpr size_t EQUAL_CARDS_INV_PROB_TO_CHANGE = 5;
+constexpr size_t NUM_INITIAL_MUTATIONS = 10;
+
+// Cross-Entropy Method Hyperparameters
+constexpr float INITIAL_WEIGHT_MEAN = 15.f;
+constexpr float INITIAL_WEIGHT_STDDEV = 12.f;
+constexpr float INITIAL_RATING_MEAN = 5.f;
+constexpr float INITIAL_RATING_STDDEV = 3.f;
+constexpr float INITIAL_UNIT_MEAN = 0.5f;
+constexpr float INITIAL_UNIT_STDDEV = 0.3f;
+
+// Differential Evolution Hyperparameters
+constexpr float CROSSOVER_RATE = 0.9f;
+constexpr float DIFFERENTIAL_VOLATILITY = 0.8f;
+
+// Architectural Parameters
 constexpr size_t NUM_CARDS = 21467;
+constexpr size_t NUM_PICK_FILES = 1508;
 constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
 constexpr size_t NUM_COLORS = 5;
-constexpr size_t POPULATION_SIZE = 1;
-constexpr size_t MAX_PACK_SIZE = 32;
+constexpr size_t MAX_PACK_SIZE = 20;
 constexpr size_t MAX_SEEN = 512;
 constexpr size_t MAX_PICKED = 128;
 constexpr size_t NUM_COMBINATIONS = 32;
-constexpr size_t PICKS_PER_GENERATION = 10'000;
 constexpr size_t PROB_DIM_0 = 9;
 constexpr size_t PROB_DIM_1 = 7;
 constexpr size_t PROB_DIM_2 = 4;
 constexpr size_t PROB_DIM_3 = 18;
 constexpr size_t PROB_DIM_4 = 18;
 constexpr size_t PROB_DIM_5 = 18;
+constexpr unsigned char BASIC_LAND_TYPES_REQUIRED = 2;
+constexpr unsigned char LANDS_TO_INCLUDE_COLOR = 3;
 constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
+using index_type = unsigned short;
 using Weights = std::array<std::array<float, PACK_SIZE>, PACKS>;
 using Colors = std::array<bool, NUM_COLORS>;
-using Lands = std::array<std::pair<Colors, size_t>, NUM_COMBINATIONS>;
-using ColorRequirement = std::pair<std::array<std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>, 5>, size_t>;
+using Lands = std::array<std::pair<Colors, unsigned char>, NUM_COMBINATIONS>;
+using ColorRequirement = std::pair<std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>, unsigned char>;
 using Embedding = std::array<float, EMBEDDING_SIZE>;
 using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
 
+constexpr float INITIAL_IS_FETCH_MULTIPLIER = 1.f;
+constexpr float INITIAL_HAS_BASIC_TYPES_MULTIPLIER = 0.75f;
+constexpr float INITIAL_IS_REGULAR_LAND_MULTIPLIER = 0.5f;
+constexpr float INITIAL_EQUAL_CARDS_SYNERGY = 2.5f;
 constexpr Weights INITIAL_RATING_WEIGHTS{{
                                                  {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
                                                  {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
@@ -65,7 +116,7 @@ constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
                                                    {13, 12.6f, 12.2f, 11.8f, 11.4f, 11, 10.6f, 10.2f, 9.8f, 9.4f, 9, 8.6f, 8.2f, 7.8f, 7},
                                                    {8, 7.5f, 7, 6.5f, 6, 5.5f, 5, 4.5f, 4, 3.5f, 3, 2.5f, 2, 1.5f, 1},
                                            }};
-constexpr float INITIAL_PROB_TO_INCLUDE = 0.67f;
+constexpr float INITIAL_PROB_TO_INCLUDE = 0.4f;
 constexpr float INITIAL_SIMILARITY_CLIP = 0.7f;
 constexpr Lands DEFAULT_LANDS{{
                                       {{false, false, false, false, false}, 0},
@@ -144,6 +195,18 @@ constexpr std::array<std::array<size_t, 16>, NUM_COLORS> INCLUSION_MAP{{
 }};
 extern std::array<float, NUM_CARDS> INITIAL_RATINGS;
 
+template <typename Generator>
+Weights generate_weights(Generator& gen) {
+    Weights result{};
+    std::uniform_real_distribution<float> weight_dist(MIN_WEIGHT, MAX_WEIGHT);
+    for (size_t i=0; i < PACKS; i++) {
+        for (size_t j=0; j < PACK_SIZE; j++) {
+            result[i][j] = weight_dist(gen);
+        }
+    }
+    return result;
+}
+
 struct Variables {
     Weights rating_weights = INITIAL_RATING_WEIGHTS;
     Weights colors_weights = INITIAL_COLORS_WEIGHTS;
@@ -153,25 +216,52 @@ struct Variables {
     Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
     std::array<float, NUM_CARDS> ratings{1};
     float prob_to_include = INITIAL_PROB_TO_INCLUDE;
+    float prob_multiplier = 1 / (1 - INITIAL_PROB_TO_INCLUDE);
     float similarity_clip = INITIAL_SIMILARITY_CLIP;
     float similarity_multiplier = 1 / (1 - INITIAL_SIMILARITY_CLIP);
+    float is_fetch_multiplier = INITIAL_IS_FETCH_MULTIPLIER;
+    float has_basic_types_multiplier = INITIAL_HAS_BASIC_TYPES_MULTIPLIER;
+    float is_regular_land_multiplier = INITIAL_IS_REGULAR_LAND_MULTIPLIER;
+    float equal_cards_synergy = INITIAL_EQUAL_CARDS_SYNERGY;
+
+    Variables() = default;
+    template <typename Generator>
+    explicit Variables(Generator& gen) {
+        std::uniform_real_distribution<float> rating_dist{0.f, MAX_SCORE};
+        std::uniform_real_distribution<float> unit_dist{0.f, 1.f};
+        rating_weights = generate_weights(gen);
+        colors_weights = generate_weights(gen);
+        fixing_weights = generate_weights(gen);
+        internal_synergy_weights = generate_weights(gen);
+        pick_synergy_weights = generate_weights(gen);
+        openness_weights = generate_weights(gen);
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = rating_dist(gen);
+        prob_to_include = std::min(unit_dist(gen), 0.99f);
+        prob_multiplier = 1 / (1 - prob_to_include);
+        similarity_clip = std::min(unit_dist(gen), 0.99f);
+        similarity_multiplier = 1 / (1 - similarity_clip);
+        is_fetch_multiplier = unit_dist(gen);
+        has_basic_types_multiplier = unit_dist(gen);
+        is_regular_land_multiplier = unit_dist(gen);
+        equal_cards_synergy = rating_dist(gen);
+    }
 };
 
 struct Pick {
-    std::array<size_t, MAX_PACK_SIZE> in_pack{std::numeric_limits<size_t>::max()};
-    std::array<size_t, MAX_SEEN> seen{std::numeric_limits<size_t>::max()};
-    std::array<size_t, MAX_PICKED> picked{std::numeric_limits<size_t>::max()};
-    size_t pack_num{0};
-    size_t pick_num{0};
-    size_t pack_size{0};
-    size_t packs{0};
-    size_t chosen_card{0};
+    std::array<index_type, MAX_PACK_SIZE> in_pack{std::numeric_limits<index_type>::max()};
+    std::array<index_type, MAX_SEEN> seen{std::numeric_limits<index_type>::max()};
+    std::array<index_type, MAX_PICKED> picked{std::numeric_limits<index_type>::max()};
+    unsigned char pack_num{0};
+    unsigned char pick_num{0};
+    unsigned char pack_size{0};
+    unsigned char packs{0};
+    index_type chosen_card{0};
 };
 extern const std::map<std::string, Colors> FETCH_LANDS;
 
 struct Constants {
     std::array<ColorRequirement, NUM_CARDS> color_requirements{}; // NOLINT(cert-err58-cpp)
-    std::array<size_t, NUM_CARDS> cmcs{0};
+    std::array<unsigned char, NUM_CARDS> cmcs{0};
     std::array<Colors, NUM_CARDS> card_colors{{false, false, false, false, false}};
     std::array<bool, NUM_CARDS> is_land{false};
     std::array<bool, NUM_CARDS> is_fetch{false};
@@ -184,4 +274,13 @@ void populate_constants(const std::string& file_name, Constants& constants);
 void populate_prob_to_cast(const std::string& file_name, Constants& constants);
 std::vector<Pick> load_picks(const std::string& folder);
 void save_variables(const Variables& variables, const std::string& file_name);
+Variables load_variables(const std::string& file_name);
+
+Variables optimize_variables(float temperature, const std::vector<Pick>& picks, size_t num_generations,
+                             const std::shared_ptr<const Constants>& constants,
+                             const std::shared_ptr<const Variables>& initial_variables, size_t seed);
+
+std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
+                                                                   const std::vector<Pick>& picks, float temperature,
+                                                                   const std::shared_ptr<const Constants>& constants);
 #endif //DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H

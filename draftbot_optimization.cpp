@@ -9,14 +9,17 @@
 #include <cmath>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <thread>
 #include <vector>
+#include <numeric>
 
 #ifdef USE_SYCL
 #include <CL/sycl.hpp>
-#include <numeric>
+#include <concurrentqueue.h>
 
 #define LOG(x) cl::sycl::log(x)
 #define SQRT(x) cl::sycl::sqrt(x)
@@ -68,69 +71,59 @@ float get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t 
 
 float get_casting_probability(const Lands& lands, const size_t card_index, const Constants& constants) {
     const ColorRequirement &color_requirement = constants.color_requirements[card_index];
-    size_t num_requirements = color_requirement.second;
+    unsigned char num_requirements = color_requirement.second;
     if (num_requirements == 0) {
         return 1;
-    } else if (num_requirements < 3) {
-        const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& first_requirement = color_requirement.first[0];
-        std::array<bool, NUM_COMBINATIONS> color_a = first_requirement.first;
-        size_t required_a = first_requirement.second;
-        std::array<bool, NUM_COMBINATIONS> color_b{false};
-        size_t required_b = 0;
-        if (num_requirements == 2) {
-            const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& second_requirement = color_requirement.first[1];
-            color_b = second_requirement.first;
-            required_b = second_requirement.second;
+    } else if (num_requirements == 1) {
+        const std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>& requirement = color_requirement.first[0];
+        unsigned char required_a = requirement.second;
+        const std::array<unsigned char, NUM_COMBINATIONS>& color_a = requirement.first;
+        unsigned char land_count_a = 0;
+        for (size_t i=1; i < COLORS.size() + 1; i++) land_count_a += color_a[i] * lands[i].second;
+        return get_prob_to_cast(constants.cmcs[card_index], required_a, 0, land_count_a, 0, 0, constants);
+    } else if (num_requirements == 2) {
+        const std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>& first_requirement = color_requirement.first[0];
+        const std::array<unsigned char, NUM_COMBINATIONS>& color_a = first_requirement.first;
+        unsigned char required_a = first_requirement.second;
+        const std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>& second_requirement = color_requirement.first[1];
+        const std::array<unsigned char, NUM_COMBINATIONS>& color_b = second_requirement.first;
+        unsigned char required_b = second_requirement.second;
+        unsigned char land_count_a = 0;
+        unsigned char land_count_b = 0;
+        unsigned char land_count_ab = 0;
+        for (size_t i=1; i < COLORS.size() + 1; i++) {
+            const unsigned char count = lands[i].second;
+            unsigned char intersection_a = color_a[i];
+            unsigned char intersection_b = color_b[i];
+            land_count_a += intersection_a * (1-intersection_b) * count;
+            land_count_b += (1-intersection_a) * intersection_b * count;
+            land_count_ab += intersection_a * intersection_b * count;
         }
         if (required_a < required_b) {
-            const size_t temp = required_a;
-            required_a = required_b;
-            required_b = temp;
-            std::array<bool, NUM_COMBINATIONS> temp_colors = color_a;
-            color_a = color_b;
-            color_b = temp_colors;
+            return get_prob_to_cast(constants.cmcs[card_index], required_b, required_a, land_count_b, land_count_a, land_count_ab, constants);
+        } else {
+            return get_prob_to_cast(constants.cmcs[card_index], required_a, required_b, land_count_a, land_count_b,
+                                    land_count_ab, constants);
         }
-        size_t land_count_a = 0;
-        size_t land_count_b = 0;
-        size_t land_count_ab = 0;
-        for (size_t i=0; i < NUM_COMBINATIONS; i++) {
-            const std::pair<Colors, size_t>& entry = lands[i];
-            bool intersection_a = color_a[i];
-            bool intersection_b = color_b[i];
-            if(intersection_a && !intersection_b) {
-                land_count_a += entry.second;
-            } else if(!intersection_a && intersection_b) {
-                land_count_b += entry.second;
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "ConstantConditionsOC"
-            } else if(intersection_a && intersection_b) {
-                land_count_ab += entry.second;
-            }
-#pragma clang diagnostic pop
-        }
-        return get_prob_to_cast(constants.cmcs[card_index], required_a, required_b, land_count_a, land_count_b, land_count_ab, constants);
     } else {
-        size_t total_devotion = 0;
+        unsigned char total_devotion = 0;
         float probability = 1.f;
-        const size_t cmc = constants.cmcs[card_index];
+        const unsigned char cmc = constants.cmcs[card_index];
         for (size_t i=0; i < num_requirements; i++) {
-            const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& entry = color_requirement.first[i];
-            total_devotion += entry.second;
-            size_t land_count = 0;
-            for (size_t j=0; j < NUM_COMBINATIONS; j++) {
-                const std::pair<Colors, size_t>& entry2 = lands[j];
-                if (entry.first[j]) {
-                    land_count += entry2.second;
-                }
-            }
-            probability *= get_prob_to_cast(cmc, entry.second, 0, land_count, 0, 0, constants);
+            const std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>& entry = color_requirement.first[i];
+            const unsigned char required = entry.second;
+            const std::array<unsigned char, NUM_COMBINATIONS>& color = entry.first;
+            total_devotion += required;
+            unsigned char land_count = 0;
+            for (unsigned char j=1; j < NUM_COLORS + 1; j++) land_count += color[j] * lands[j].second;
+            probability *= get_prob_to_cast(cmc, required, 0, land_count, 0, 0, constants);
         }
-        size_t land_count = 0;
+        unsigned char land_count = 0;
         for (size_t i=0; i < NUM_COMBINATIONS; i++) {
-            const std::pair<Colors, size_t>& entry2 = lands[i];
+            const std::pair<Colors, unsigned char>& entry2 = lands[i];
             for (size_t j=0; j < num_requirements; j++) {
-                const std::pair<std::array<bool, NUM_COMBINATIONS>, size_t>& entry = color_requirement.first[j];
-                if (entry.first[i]) {
+                const std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>& entry = color_requirement.first[j];
+                if (entry.first[i] == 1) {
                     land_count += entry2.second;
                     break;
                 }
@@ -140,122 +133,138 @@ float get_casting_probability(const Lands& lands, const size_t card_index, const
     }
 }
 
-float calculate_synergy(const size_t card_index_1, const size_t card_index_2, const Variables& variables, const Constants& constants) {
+float calculate_synergy(const index_type card_index_1, const index_type card_index_2, const Variables& variables, const Constants& constants) {
     const float scaled = variables.similarity_multiplier * std::min(std::max(0.f, constants.similarities[card_index_1][card_index_2] - variables.similarity_clip),
                                                                     1 - variables.similarity_clip);
-    const float transformed = 1 / (1 - scaled) / 3;
+    if (card_index_1 == card_index_2) return variables.equal_cards_synergy;
+    const float transformed = 1 / (1 - scaled) - 1;
+//    std::cout << "Synergy between " << card_index_1 << " and " << card_index_2 << " with similarity " << constants.similarities[card_index_1][card_index_2]
+//              << ", similarity_clip " << variables.similarity_clip << ", and transformed into " << transformed << std::endl;
     if (ISNAN(transformed)) return 0;
-    else if (ISINF(transformed)) return 10;
-    else return std::min(transformed, 10.f);
+    else return std::min(transformed, MAX_SCORE);
 }
 
-float rating_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
+float rating_oracle(const index_type card_index, const Lands&, const Variables& variables, const Pick& pick, const Constants&,
                     const float probability) {
+//    std::cout << "Rating " << variables.ratings[pick.in_pack[card_index]] << " Probability: " << probability << std::endl;
     return probability * variables.ratings[pick.in_pack[card_index]];
 }
 
-float pick_synergy_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
-                          const Constants& constants, std::array<float, MAX_PICKED> probabilities, const size_t num_valid_indices,
+float pick_synergy_oracle(const index_type, const Lands&, const Variables&, const Pick&,
+                          const Constants&, std::array<float, MAX_PICKED> probabilities, const index_type num_valid_indices,
                           const float probability, const std::array<float, MAX_PICKED>& synergies) {
     if (num_valid_indices == 0) return 0;
     float total_synergy = 0;
     for (size_t i=0; i < num_valid_indices; i++) total_synergy += probabilities[i] * synergies[i];
-    return total_synergy * probability / num_valid_indices;
+    return total_synergy * probability / (float)num_valid_indices;
 }
 
-float fixing_oracle(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
-    const size_t card_real_index = pick.in_pack[card_index];
+float fixing_oracle(const index_type card_index, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants) {
+    const index_type card_real_index = pick.in_pack[card_index];
     if (constants.is_land[card_real_index]) {
         float overlap = 0;
         for (size_t i=0; i < NUM_COLORS; i++){
             if (constants.card_colors[card_real_index][i]) {
-                size_t count = 0;
+                unsigned char count = 0;
                 for (size_t j=0; j < INCLUSION_MAP[i].size(); j++) count += lands[j].second;
-                if (count > 2) overlap += 2;
+                if (count >= LANDS_TO_INCLUDE_COLOR) overlap += MAX_SCORE / 5;
             }
         }
-        if (constants.is_fetch[card_real_index]) return overlap;
-        else if (constants.has_basic_land_types[card_real_index]) return 0.75f * overlap;
-        else return 0.5f * overlap;
+        if (constants.is_fetch[card_real_index]) return variables.is_fetch_multiplier * overlap;
+        else if (constants.has_basic_land_types[card_real_index]) return variables.has_basic_types_multiplier * overlap;
+        else return variables.is_regular_land_multiplier * overlap;
     } else return 0;
 }
 
-float internal_synergy_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
-                              const std::array<float, MAX_PICKED>& probabilities, const size_t num_valid_indices,
+float internal_synergy_oracle(const index_type, const Lands&, const Variables&, const Pick&, const Constants&,
+                              const std::array<float, MAX_PICKED>& probabilities, const index_type num_valid_indices,
                               const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& synergies) {
     if (num_valid_indices < 2) return 0;
     float internal_synergy = 0;
-    for(size_t i=0; i < num_valid_indices; i++) {
+    for(index_type i=0; i < num_valid_indices; i++) {
         if (probabilities[i] > 0) {
             float card_synergy = 0;
-            for (size_t j = 0; j < i; j++) card_synergy += probabilities[j] * synergies[i][j];
+            for (index_type j = 0; j < i; j++) card_synergy += probabilities[j] * synergies[i][j];
             internal_synergy += probabilities[i] * card_synergy;
         }
     }
-    return internal_synergy / (float)(num_valid_indices * (num_valid_indices + 1));
+    return 2 * internal_synergy / (float)(num_valid_indices * (num_valid_indices - 1));
 }
 
 template<size_t Size>
-float sum_gated_rating(const Lands& lands, const Variables& variables, const std::array<size_t, Size>& indices,
+float sum_gated_rating(const Variables& variables, const std::array<index_type, Size>& indices,
                        const Constants& constants, const std::array<float, Size> probabilities,
-                       const size_t num_valid_indices) {
+                       const index_type num_valid_indices) {
     float result = 0;
-    for (size_t i=0; i < num_valid_indices; i++) result += variables.ratings[indices[i]] * probabilities[i];
-    return result / num_valid_indices;
+    for (index_type i=0; i < num_valid_indices; i++) {
+        result += variables.ratings[indices[i]] * probabilities[i];
+//        std::cout << variables.ratings[indices[i]] << "*" << probabilities[i] << "(" << indices[i] << "); ";
+    }
+    return result / (float) num_valid_indices;
 }
 
-float openness_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
-                    const std::array<float, MAX_SEEN> probabilities, const size_t num_valid_indices) {
-    return sum_gated_rating(lands, variables, pick.seen, constants, probabilities, num_valid_indices);
+float openness_oracle(const index_type, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
+                      const std::array<float, MAX_SEEN> probabilities, const index_type num_valid_indices) {
+    return sum_gated_rating(variables, pick.seen, constants, probabilities, num_valid_indices);
 }
 
-float colors_oracle(const size_t, const Lands& lands, const Variables& variables, const Pick& pick, const Constants& constants,
-                    const std::array<float, MAX_PICKED> probabilities, const size_t num_valid_indices) {
-    return sum_gated_rating(lands, variables, pick.picked, constants, probabilities, num_valid_indices);
+float colors_oracle(const index_type, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
+                    const std::array<float, MAX_PICKED> probabilities, const index_type num_valid_indices) {
+    return sum_gated_rating(variables, pick.picked, constants, probabilities, num_valid_indices);
 }
 
-float get_score(const size_t card_index, const Lands& lands, const Variables& variables, const Pick& pick,
+float get_score(const index_type card_index, const Lands& lands, const Variables& variables, const Pick& pick,
                 const float rating_weight, const float pick_synergy_weight, const float fixing_weight,
                 const float internal_synergy_weight, const float openness_weight, const float colors_weight,
-                const Constants& constants, const size_t num_valid_picked_indices, const size_t num_valid_seen_indices,
+                const Constants& constants, const index_type num_valid_picked_indices, const index_type num_valid_seen_indices,
                 const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& internal_synergies,
                 const std::array<float, MAX_PICKED>& pick_synergies) {
     std::array<float, MAX_PICKED> picked_probabilities{0};
     std::array<float, MAX_SEEN> seen_probabilities{0};
-    for (size_t i=0; i < num_valid_picked_indices; i++)
-        picked_probabilities[i] = std::max(get_casting_probability(lands, pick.picked[i], constants) - variables.prob_to_include, 0.f) / (1 - variables.prob_to_include);
-    for (size_t i=0; i < num_valid_seen_indices; i++) 
-        seen_probabilities[i] = std::max(get_casting_probability(lands, pick.seen[i], constants) - variables.prob_to_include, 0.f)
-                                    / (1 - variables.prob_to_include);
+    for (index_type i=0; i < num_valid_picked_indices; i++) {
+        picked_probabilities[i] =
+                std::max(get_casting_probability(lands, pick.picked[i], constants) - variables.prob_to_include, 0.f)
+                * variables.prob_multiplier;
+    }
+    for (index_type i=0; i < num_valid_seen_indices; i++) {
+        seen_probabilities[i] =
+                std::max(get_casting_probability(lands, pick.seen[i], constants) - variables.prob_to_include, 0.f)
+                * variables.prob_multiplier;
+    }
+//    std::cout << "Picked probabilities: " << picked_probabilities[0];
+//    for (size_t i=1; i < num_valid_picked_indices; i++) std::cout << ", " << picked_probabilities[i];
+//    std::cout << std::endl;
     float card_casting_probability = get_casting_probability(lands, pick.in_pack[card_index], constants);
     const float rating_score = rating_oracle(card_index, lands, variables, pick, constants, card_casting_probability);
 //    return rating_score*rating_weight;
-    /* std::cout << rating_score << "*" << rating_weight; */
+//    std::cout << rating_score << "*" << rating_weight;
     const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
                                                          num_valid_picked_indices, card_casting_probability, pick_synergies);
 //    return pick_synergy_score*pick_synergy_weight;
-    /* std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight; */
+//    std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
     const float fixing_score = fixing_oracle(card_index, lands, variables, pick, constants);
 //    return fixing_score*fixing_weight;
-    /* std::cout << " + " << fixing_score << "*" << fixing_weight; */
+//    std::cout << " + " << fixing_score << "*" << fixing_weight;
     const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick, constants,
                                                                  picked_probabilities, num_valid_picked_indices, internal_synergies);
 //    return internal_synergy_score*internal_synergy_weight;
-    /* std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight; */
+//    std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
     const float openness_score = openness_oracle(card_index, lands, variables, pick, constants, seen_probabilities,
                                                  num_valid_seen_indices);
 //    return openness_score*openness_weight;
-    /* std::cout << " + " << openness_score << "*" << openness_weight; */
+//    std::cout << " + " << openness_score << "*" << openness_weight;
     const float colors_score = colors_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
                                              num_valid_picked_indices);
 //    return colors_score*colors_weight;
-    /* std::cout << " + " << colors_score << "*" << colors_weight; */
-    /* std::cout << std::endl; */
+//    std::cout << " + " << colors_score << "*" << colors_weight;
+//    std::cout << std::endl;
     return rating_score*rating_weight + pick_synergy_score*pick_synergy_weight + fixing_score*fixing_weight
            + internal_synergy_score*internal_synergy_weight + openness_score*openness_weight + colors_score*colors_weight;
 }
 
-float do_climb(const size_t card_index, const Variables& variables, const Pick& pick, const Constants& constants) {
+float do_climb(const index_type card_index, const Variables& variables, const Pick& pick, const Constants& constants,
+               const index_type num_valid_picked_indices, const index_type num_valid_seen_indices,
+               const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& internal_synergies) {
     float previous_score = -1;
     float current_score = 0;
     const float rating_weight = interpolate_weights(variables.rating_weights, pick);
@@ -264,27 +273,9 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
     const float internal_synergy_weight = interpolate_weights(variables.internal_synergy_weights, pick);
     const float openness_weight = interpolate_weights(variables.openness_weights, pick);
     const float colors_weight = interpolate_weights(variables.colors_weights, pick);
-    size_t num_valid_picked_indices = pick.picked.size();
-    size_t num_valid_seen_indices = pick.seen.size();
-    for (size_t i=0; i < pick.picked.size(); i++) {
-        if (pick.picked[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_picked_indices = i;
-            break;
-        }
-    }
-    for (size_t i=0; i < pick.seen.size(); i++) {
-        if (pick.seen[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_seen_indices = i;
-            break;
-        }
-    }
-    std::array<std::array<float, MAX_PICKED>, MAX_PICKED> internal_synergies{{0}};
     std::array<float, MAX_PICKED> pick_synergies{0};
-    for (size_t i=0; i < num_valid_picked_indices; i++) {
+    for (index_type i=0; i < num_valid_picked_indices; i++) {
         pick_synergies[i] = calculate_synergy(pick.picked[i], pick.in_pack[card_index], variables, constants);
-        for (size_t j=0; j < i; j++) {
-            internal_synergies[i][j] = calculate_synergy(pick.picked[i], pick.picked[j], variables, constants);
-        }
     }
     Lands lands = DEFAULT_LANDS;
     std::array<bool, COLORS.size() + 1> previous_adds{false};
@@ -304,6 +295,7 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
                                             constants, num_valid_picked_indices, num_valid_seen_indices,
                                             internal_synergies, pick_synergies);
                     if (score > current_score) {
+//                        std::cout << "New score " << score << " remove_index " << remove_index << " add_index " << add_index << std::endl;
                         previous_adds[add_index] = true;
                         previous_removes[remove_index] = true;
                         current_score = score;
@@ -321,25 +313,49 @@ float do_climb(const size_t card_index, const Variables& variables, const Pick& 
 
 std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
     std::array<double, MAX_PACK_SIZE> scores{0};
-    double denominator = 0;
-    size_t num_valid_indices = pick.in_pack.size();
+    auto num_valid_indices = (index_type)pick.in_pack.size();
     for (size_t i=0; i < pick.in_pack.size(); i++) {
-        if (pick.in_pack[i] == std::numeric_limits<size_t>::max()) {
-            num_valid_indices = i;
+        if (pick.in_pack[i] == std::numeric_limits<index_type>::max()) {
+            num_valid_indices = (index_type)i;
             break;
         }
     }
+    auto num_valid_picked_indices = (index_type)pick.picked.size();
+    auto num_valid_seen_indices = (index_type)pick.seen.size();
+    for (size_t i=0; i < pick.picked.size(); i++) {
+        if (pick.picked[i] == std::numeric_limits<index_type>::max()) {
+            num_valid_picked_indices = (index_type)i;
+            break;
+        }
+    }
+    for (size_t i=0; i < pick.seen.size(); i++) {
+        if (pick.seen[i] == std::numeric_limits<index_type>::max()) {
+            num_valid_seen_indices = (index_type)i;
+            break;
+        }
+    }
+    std::array<std::array<float, MAX_PICKED>, MAX_PICKED> internal_synergies{{0}};
+    for (index_type i=0; i < num_valid_picked_indices; i++) {
+        for (index_type j=0; j < i; j++) {
+            internal_synergies[i][j] = calculate_synergy(pick.picked[i], pick.picked[j], variables, constants);
+        }
+    }
     double max_score = 0;
-    for (size_t i=0; i < num_valid_indices; i++) {
-        const double score = do_climb(i, variables, pick, constants);
+    double denominator = 0;
+    for (index_type i=0; i < num_valid_indices; i++) {
+        const double score = do_climb(i, variables, pick, constants, num_valid_picked_indices, num_valid_seen_indices, internal_synergies);
+//        std::cout << "Score " << i << ": " << score << std::endl;
         scores[i] = EXP(score / temperature);
         max_score = std::max(scores[i], max_score);
         denominator += scores[i];
     }
-    for(size_t i=0; i < num_valid_indices; i++) {
+    bool best = true;
+    for (index_type i=0; i < num_valid_indices; i++) best &= (pick.in_pack[i] == pick.chosen_card) == (scores[i] == max_score);
+    for(index_type i=0; i < num_valid_indices; i++) {
         if (pick.in_pack[i] == pick.chosen_card) {
             if (scores[i] >= 0) {
-                return {-LOG(scores[i] / denominator), scores[i] == max_score};
+//                std::cout << "Final Score: " << scores[i] << " / " << denominator << " = " << scores[i] / denominator << " -> " << -LOG(scores[i] / denominator) << std::endl;
+                return {-LOG(scores[i] / denominator), best};
             } else {
                 return {-1, false};
             }
@@ -348,89 +364,166 @@ std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variab
     return {-2, false};
 }
 
-std::array<double, 2> get_batch_loss(const std::vector<Pick>& picks, const Variables& variables,
+std::array<double, 4> get_batch_loss(const std::vector<Pick>& picks, const Variables& variables,
                                      const float temperature, const Constants& constants) {
-    double sum_loss = 0;
     size_t count_correct = 0;
+    std::array<double, 4> result{{0, 0, 0, 0}};
     for (size_t i=0; i < PICKS_PER_GENERATION; i++) {
         const std::pair<double, bool> pick_loss = calculate_loss(picks[i], variables, temperature, constants);
-        if (pick_loss.first < 0) return {pick_loss.first, -1};
-        sum_loss += pick_loss.first;
+//        std::cout << "Finished pick " << i << " with Loss " << pick_loss.first << " and correctness " << pick_loss.second << std::endl;
+        if (pick_loss.first < 0) return {pick_loss.first, -1, -1, -1};
+        result[1] += pick_loss.first;
         if (pick_loss.second) count_correct++;
     }
-    return {sum_loss / PICKS_PER_GENERATION, count_correct / (double)PICKS_PER_GENERATION};
+    result[3] = count_correct / (double)PICKS_PER_GENERATION;
+    result[2] = -LOG(result[3]);
+    result[1] /= PICKS_PER_GENERATION;
+    result[0] = CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT * result[1]
+                 + NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT * result[2];
+    return result;
 }
 
+#ifdef USE_SYCL
 class calculate_batch_loss;
 
-std::array<std::array<double, 2>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
-                                                                   const std::vector<Pick>& picks, const float temperature,
-                                                                   const std::shared_ptr<const Constants>& constants) {
-    std::array<std::array<double, 2>, POPULATION_SIZE> results{{0,0}};
-#ifdef USE_SYCL
-    using namespace cl::sycl;
-    try {
-        const auto dev_type = cl::sycl::info::device_type::gpu;
-        // Platform selection
-        auto plats = cl::sycl::platform::get_platforms();
-        if (plats.empty()) throw std::runtime_error{ "No OpenCL platform found." };
-
-        auto plat = plats.at(1);
-        // Device selection
-        auto devs = plat.get_devices(dev_type);
-        if (devs.empty()) throw std::runtime_error{ "No OpenCL device of specified type found on selected platform." };
-
-        auto dev = devs.at(0);
-
-        // Context, queue, buffer creation
-        auto async_error_handler = [](const cl::sycl::exception_list& errors) { for (const auto& error : errors) throw error; }; // NOLINT(misc-throw-by-value-catch-by-reference,hicpp-exception-baseclass)
-
-        cl::sycl::context ctx{ dev, async_error_handler };
-
-        cl::sycl::gpu_selector selector;
-
-        cl::sycl::queue myQueue{selector};
-
-        /* Create a scope to control data synchronisation of buffer objects. */
-        {
-            buffer<Variables, 1> inputBuffer(variables.data(), sycl::range<1>(POPULATION_SIZE));
-            buffer<Pick, 1> picksBuffer(picks.data(), sycl::range<1>(picks.size()));
-            buffer<Constants, 1> constantsBuffer(constants.get(), sycl::range<1>(1));
-            buffer<std::pair<double, bool>, 2> outputBuffer{{POPULATION_SIZE, PICKS_PER_GENERATION}};
-
+void run_simulations_on_device(const cl::sycl::device& device,
+                               moodycamel::ConcurrentQueue<size_t>& concurrent_queue,
+                               moodycamel::ProducerToken& producer_token,
+                               const std::vector<Variables>& variables,
+                               const std::vector<Pick>& picks,
+                               const Constants& constants,
+                               const float temperature,
+                               std::vector<std::vector<std::pair<double, bool>>>& results) {
+    const auto start = std::chrono::high_resolution_clock::now();
+    cl::sycl::queue sycl_queue{device};
+    const size_t num_groups = sycl_queue.get_device().get_info<cl::sycl::info::device::max_compute_units>();
+    // getting the maximum work group size per thread
+    const size_t work_group_size = sycl_queue.get_device().get_info<cl::sycl::info::device::max_work_group_size>();
+    // building the best number of global thread
+    const auto total_threads = num_groups * work_group_size;
+//    const size_t pick_group_threads = PICKS_PER_GENERATION;
+//    const size_t variables_to_process = total_threads / 2048;
+    const size_t pick_group_threads = 2048;
+//    const size_t variables_to_process = total_threads / pick_group_threads;
+    const size_t variables_to_process = 2 * total_threads / pick_group_threads;
+//    auto variables_to_process = (size_t)std::ceil(PICKS_PER_OPENCL_THREAD * total_threads / (float)PICKS_PER_GENERATION);
+//    size_t pick_group_threads = total_threads / variables_to_process;
+    std::vector<Variables> iteration_variables;
+    iteration_variables.reserve(variables_to_process);
+    std::vector<size_t> variable_indices;
+    variable_indices.reserve(variables_to_process);
+    cl::sycl::buffer<Pick, 1> picks_buffer(picks.data(), sycl::range<1>(picks.size()));
+    cl::sycl::buffer<Constants, 1> constants_buffer(&constants, sycl::range<1>(1));
+    cl::sycl::buffer<std::pair<double, bool>, 2> output_buffer{{variables_to_process, PICKS_PER_GENERATION}};
+    auto device_id = sycl_queue.get_device().get_info<cl::sycl::info::device::vendor_id>();
+    auto pre_loop_start = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff1 = pre_loop_start - start;
+    std::cout << "Setting up loop for device " << device_id << " took " << diff1.count() << " seconds" << std::endl;
+//    std::cout << "Device: " << device_id << " has "
+//              << total_threads << " total threads made up of " << num_groups << " work groups of size " << work_group_size
+//              << " we will have threads in the range (" << variables_to_process << ", " << pick_group_threads
+//              << ") calculating losses for a total of " << variables_to_process * pick_group_threads << " threads" << std::endl;
+    auto previous_loop_end = std::chrono::high_resolution_clock::now();
+    while (true) {
+        const auto loop_start = std::chrono::high_resolution_clock::now();
+        const std::chrono::duration<double> diff2 = loop_start - previous_loop_end;
+        std::cout << "Cleanup time for previous loop took " << diff2.count() << " seconds" << std::endl;
+        variable_indices.clear();
+        iteration_variables.clear();
+        for (size_t i=0; i < variables_to_process; i++) {
+            size_t current_variables_index = 0;
+            if(!concurrent_queue.try_dequeue_from_producer(producer_token, current_variables_index)) {
+                auto time_to_fail = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> diff = time_to_fail - loop_start;
+                std::cout << "Finding out queue was empty took " << diff.count() << " seconds" << std::endl;
+                break;
+            }
+            variable_indices.push_back(current_variables_index);
+            iteration_variables.push_back(variables[current_variables_index]);
+        }
+        if (variable_indices.empty()) break;
+        cl::sycl::buffer<Variables, 1> variables_buffer(variables.data(), sycl::range<1>(variables_to_process));
+        try {
             /* Submit a command_group to execute from the queue. */
-            myQueue.submit([&](handler &cgh) {
+            sycl_queue.submit([&](cl::sycl::handler &cgh) {
                 /* Create accessors for accessing the input and output data within the
                  * kernel. */
-                auto inputPtr = inputBuffer.get_access<access::mode::read>(cgh);
-                auto pickPtr = picksBuffer.get_access<access::mode::read>(cgh);
-                auto constantsPtr = constantsBuffer.get_access<access::mode::read>(cgh);
-                auto outputPtr = outputBuffer.get_access<access::mode::write>(cgh);
+                auto variables_ptr = variables_buffer.get_access<cl::sycl::access::mode::read>(cgh);
+                auto picks_ptr = picks_buffer.get_access<cl::sycl::access::mode::read>(cgh);
+                auto constants_ptr = constants_buffer.get_access<cl::sycl::access::mode::read>(cgh);
+                auto output_ptr = output_buffer.get_access<cl::sycl::access::mode::write>(cgh);
 
-                cgh.parallel_for<class calculate_batch_loss>(sycl::range<2>(POPULATION_SIZE, picks.size()),
-                                                             [=](cl::sycl::id<2> wiID) {
-                                                                const Variables& variables = inputPtr[wiID[0]];
-                                                                const Pick& pick = pickPtr[wiID[1]];
-                                                                const Constants& constants = constantsPtr[0];
-                                                                outputPtr[wiID] = calculate_loss(pick, variables, temperature, constants);
-                                                             }
-                );
+                cgh.parallel_for<class calculate_batch_loss>(sycl::range<2>{variable_indices.size(), PICKS_PER_GENERATION},
+                                                             [=](cl::sycl::item<2> item_id) {
+                                                                 const Variables& variables = variables_ptr[item_id[0]];
+                                                                 const Constants &constants = constants_ptr[0];
+                                                                 const Pick &pick = picks_ptr[item_id[1]];
+                                                                 //for(size_t i=item_id[1]; i < PICKS_PER_GENERATION; i += item_id.get_range()[1]) {
+                                                                     output_ptr[item_id[0]][item_id[1]] = calculate_loss(
+                                                                             pick, variables, temperature, constants);
+//                                                                 }
+                                                             });
             });
-            myQueue.wait();
-            auto readOutputPtr = outputBuffer.get_access<access::mode::read>();
-            for (size_t i=0; i < POPULATION_SIZE; i++) {
-                size_t count_correct = 0;
+            sycl_queue.wait();
+            auto output_ptr = output_buffer.get_access<cl::sycl::access::mode::read>();
+            for (size_t i=0; i < variable_indices.size(); i++) {
                 for (size_t j=0; j < PICKS_PER_GENERATION; j++) {
-//                    if (j % 1000 == 0 || readOutputPtr[i][j].first < 0 || ISINF(readOutputPtr[i][j].first) || j == 10606 || j == 10664 || j==11782 || j==11782) std::cout << i << "," << j << " " << readOutputPtr[i][j].first << "," << readOutputPtr[i][j].second << std::endl;
-                    results[i][0] += readOutputPtr[i][j].first;
-                    if (readOutputPtr[i][j].second) count_correct++;
+                    results[variable_indices[i]][j] = output_ptr[i][j];
                 }
-                results[i][1] = count_correct / (double)PICKS_PER_GENERATION;
-                results[i][0] /= results[i][1] * PICKS_PER_GENERATION;
-//                std::cout << "Generation " << i << ": " << results[i][0] << ", " << results[i][1] << ", " << 1 / results[i][1] << std::endl;
             }
+                    } catch (cl::sycl::exception& error) {
+            std::cerr << error.what() << std::endl;
+            std::rethrow_exception(std::current_exception());
         }
-    } catch (exception& e) {
+        const auto loop_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = loop_end - loop_start;
+        std::cout << "Loop on device " << device_id << " took " << diff.count() << " seconds" << std::endl;
+        previous_loop_end = loop_end;
+    }
+    const auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end - start;
+    std::cout << "Processing on device " << device_id << " took " << diff.count() << " seconds" << std::endl;
+}
+#endif
+
+std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
+                                                                   const std::vector<Pick>& picks, const float temperature,
+                                                                   const std::shared_ptr<const Constants>& constants) {
+    std::array<std::array<double, 4>, POPULATION_SIZE> results{{0,0,0,0}};
+#ifdef USE_SYCL
+    try {
+        std::vector<std::vector<std::pair<double, bool>>> pick_results(POPULATION_SIZE, std::vector<std::pair<double, bool>>(PICKS_PER_GENERATION, {0, false}));
+        moodycamel::ConcurrentQueue<size_t> concurrent_queue(POPULATION_SIZE);
+        moodycamel::ProducerToken producer_token(concurrent_queue);
+        std::vector<cl::sycl::queue> queues;
+        for (size_t i=0; i < POPULATION_SIZE; i++) concurrent_queue.enqueue(producer_token, i);
+        std::vector<std::thread> threads;
+        auto plats = cl::sycl::platform::get_platforms();
+        const auto& plat = plats.at(1);
+        auto devices = plat.get_devices();
+        threads.reserve(devices.size());
+        for (const auto& device : devices) {
+//            run_simulations_on_device(device, concurrent_queue, producer_token,
+//                                      variables, picks, *constants, temperature, pick_results);
+            threads.emplace_back([&]{ run_simulations_on_device(device, concurrent_queue, producer_token,
+                                                                variables, picks, *constants, temperature, pick_results); });
+        }
+        if (threads.empty()) throw std::runtime_error{ "No OpenCL devices found." };
+        for (auto& thread : threads) thread.join();
+        for (size_t i = 0; i < POPULATION_SIZE; i++) {
+            size_t count_correct = 0;
+            for (size_t j = 0; j < PICKS_PER_GENERATION; j++) {
+                // if (j % 1000 == 0 || pick_results[i][j].first <= 0 || ISINF(pick_results[i][j].first) || ISNAN(pick_results[i][j].first)) std::cout << i << "," << j << " " << pick_results[i][j].first << "," << pick_results[i][j].second << std::endl;
+                results[i][1] += pick_results[i][j].first;
+                if (pick_results[i][j].second) count_correct++;
+            }
+            results[i][3] = count_correct / (double) PICKS_PER_GENERATION;
+            results[i][2] = -LOG(results[i][3]);
+            results[i][1] /= PICKS_PER_GENERATION;
+            results[i][0] = CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT * results[i][1]
+                             + NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT * results[i][2];
+        }
+    } catch (cl::sycl::exception& e) {
         /* In the case of an exception being throw, print the error message and
          * rethrow it. */
         std::cerr << e.what() << std::endl;
@@ -460,138 +553,37 @@ std::array<std::array<double, 2>, POPULATION_SIZE> run_simulations(const std::ve
     return results;
 }
 
-Weights crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64& gen) {
-    Weights result = weights1;
-    for (size_t pack=0; pack < PACKS; pack++) {
-        for (size_t pick=0; pick < PACK_SIZE; pick++) {
-            result[pack][pick] = (weights1[pack][pick] + weights2[pack][pick]) / 2;
+Weights generate_weights(std::mt19937_64& gen) {
+    Weights result{};
+    std::uniform_real_distribution<float> weight_dist(MIN_WEIGHT, MAX_WEIGHT);
+    for (size_t i=0; i < PACKS; i++) {
+        for (size_t j=0; j < PACK_SIZE; j++) {
+            result[i][j] = weight_dist(gen);
         }
     }
     return result;
-}
-
-Variables crossover_variables(const Variables& variables1, const Variables& variables2, std::mt19937_64& gen) {
-    Variables result = variables1;
-    result.rating_weights = crossover_weights(variables1.rating_weights, variables2.rating_weights, gen);
-    result.pick_synergy_weights = crossover_weights(variables1.pick_synergy_weights, variables2.pick_synergy_weights, gen);
-    result.fixing_weights = crossover_weights(variables1.fixing_weights, variables2.fixing_weights, gen);
-    result.internal_synergy_weights = crossover_weights(variables1.internal_synergy_weights, variables2.fixing_weights, gen);
-    result.openness_weights = crossover_weights(variables1.openness_weights, variables2.openness_weights, gen);
-    result.colors_weights = crossover_weights(variables1.colors_weights, variables2.colors_weights, gen);
-    result.prob_to_include = (variables1.prob_to_include + variables2.prob_to_include) / 2;
-    result.similarity_clip = (variables1.similarity_clip + variables2.similarity_clip) / 2;
-    result.similarity_multiplier = 1 / (1 - result.similarity_clip);
-    for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = (variables1.ratings[i] + variables2.ratings[i]) / 2;
-    return result;
-}
-
-Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
-    std::normal_distribution<float> std_dev_1{0, 1.0};
-    std::uniform_int_distribution<size_t> int_distribution(0, 4);
-    for (auto& pack : weights) {
-        for (float& weight : pack) {
-            if (int_distribution(gen) == 0) weight += std_dev_1(gen);
-        }
-    }
-    return weights;
-}
-
-Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
-    std::normal_distribution<float> std_dev_005{0, 0.05f};
-    std::normal_distribution<float> std_dev_05{0, 0.5f};
-    std::uniform_int_distribution<size_t> int_distribution(0, 4);
-    std::uniform_int_distribution<size_t> int_distribution2(0, 9);
-    mutate_weights(variables.rating_weights, gen);
-    mutate_weights(variables.pick_synergy_weights, gen);
-    mutate_weights(variables.fixing_weights, gen);
-    mutate_weights(variables.internal_synergy_weights, gen);
-    mutate_weights(variables.openness_weights, gen);
-    mutate_weights(variables.colors_weights, gen);
-    if(int_distribution(gen) == 0) {
-        variables.prob_to_include += std_dev_005(gen);
-        variables.prob_to_include = std::max(std::min(variables.prob_to_include, 1.f), 0.f);
-    }
-    if(int_distribution(gen) == 0) {
-        variables.similarity_clip += std_dev_005(gen);
-        variables.similarity_clip = std::max(std::min(variables.similarity_clip, 0.99f), 0.f);
-        variables.similarity_multiplier = 1 / (1 - variables.similarity_clip);
-    }
-    for (size_t i=0; i < NUM_CARDS; i++) {
-        if(int_distribution2(gen) == 0) {
-            variables.ratings[i] += std_dev_05(gen);
-            variables.ratings[i] = std::max(std::min(10.f, variables.ratings[i]), 0.f);
-        }
-    }
-    return variables;
-}
-
-Variables optimize_variables(const float temperature, const std::vector<Pick>& picks, const size_t num_generations,
-                             const std::shared_ptr<const Constants>& constants) {
-    std::cout << "Beginning optimize_variables with population size of " << POPULATION_SIZE << std::endl << std::endl;
-    std::random_device rd{};
-    std::mt19937_64 gen{rd()};
-    std::uniform_int_distribution<size_t> crossover_selector(0, POPULATION_SIZE / 2 + POPULATION_SIZE % 2 - 1);
-    std::uniform_int_distribution<size_t> pick_selector(0, picks.size() - 1);
-    std::vector<Variables> population(POPULATION_SIZE);
-    std::vector<Pick> chosen_picks{PICKS_PER_GENERATION};
-    for (size_t i=0; i < POPULATION_SIZE; i++) population[i].ratings = INITIAL_RATINGS;
-    for(size_t generation=0; generation < num_generations; generation++) {
-        const auto start = std::chrono::high_resolution_clock::now();
-//        std::cout << "Beginning crossover" << std::endl;
-        for (size_t i=0; i < POPULATION_SIZE / 2 + POPULATION_SIZE % 2; i++) {
-            size_t index1 = crossover_selector(gen);
-            size_t index2 = crossover_selector(gen);
-            population[POPULATION_SIZE / 2 + i] = crossover_variables(population[index1], population[index2], gen);
-        }
-//        std::cout << "Beginning mutation" << std::endl;
-        for (Variables& variables : population) {
-            mutate_variables(variables, gen);
-        }
-//        std::cout << "Selecting picks for generation" << std::endl;
-        for (size_t i=0; i < PICKS_PER_GENERATION; i++) chosen_picks[i] = picks[pick_selector(gen)];
-//        std::cout << "Beginning calculating losses" << std::endl;
-        std::array<std::array<double, 2>, POPULATION_SIZE> losses = run_simulations(population, chosen_picks, temperature, constants);
-        std::array<std::pair<std::size_t, std::array<double, 2>>, POPULATION_SIZE> indexed_losses;
-        for (size_t i=0; i < POPULATION_SIZE; i++) indexed_losses[i] = {i, losses[i]};
-        std::sort(indexed_losses.begin(), indexed_losses.end(),
-                  [](const auto& pair1, const auto& pair2){
-                    if (std::isnan(pair1.second[0])) return false;
-                    else if (std::isnan(pair2.second[0])) return true;
-                    else return pair1.second[0] < pair2.second[0];
-                  });
-        std::sort(losses.begin(), losses.end(), [](auto& arr1, auto& arr2){ return arr1[1] > arr2[1]; });
-        std::array<double, 2> total_metrics = std::accumulate(losses.begin(), losses.end(), std::array<double, 2>{0, 0},
-                                                              [](auto& arr1, auto& arr2)->std::array<double, 2>{ return {arr1[0] + arr2[0], arr1[1] + arr2[1]}; });
-        std::cout << "Generation: " << generation << std::endl << "Best Loss: " << indexed_losses[0].second[0]
-                  << " with Accuracy: " << indexed_losses[0].second[1] << std::endl
-                  << "Best Accuracy: " << losses[0][1] << " with Loss: " << losses[0][0] << std::endl
-                  << "Average Loss: " << total_metrics[0] / POPULATION_SIZE << " with Average Accuracy: "
-                  << total_metrics[1] / POPULATION_SIZE << std::endl;
-        std::vector<Variables> temp_population(POPULATION_SIZE);
-        for (size_t i=0; i < POPULATION_SIZE; i++) temp_population[i] = population[indexed_losses[i].first];
-        population = temp_population;
-        const auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        std::cout << "Generation took " << diff.count() << " seconds" << std::endl << std::endl;
-    }
-    return population[0];
 }
 
 int main(const int argc, const char* argv[]) {
-    if (argc != 3) {
+    if (argc < 3) {
         return -1;
     }
-    std::cout.precision(20);
-    const float temperature = std::strtof(argv[1], nullptr);
-    const size_t generations = std::strtoull(argv[2], nullptr, 10);
     const std::shared_ptr<const Constants> constants = [](){ // NOLINT(cert-err58-cpp)
         std::shared_ptr<Constants> result_ptr = std::make_shared<Constants>();
         populate_constants("data/intToCard.json", *result_ptr);
         populate_prob_to_cast("data/probTable.json", *result_ptr);
         return result_ptr;
     }();
+    std::random_device rd;
+    size_t seed = rd();
+    std::shared_ptr<const Variables> initial_variables;
+    if (argc > 4) initial_variables = std::make_shared<Variables>(load_variables(argv[4]));
+    if (argc > 3) seed = std::strtoull(argv[3], nullptr, 10);
+    std::cout.precision(PRECISION);
+    std::cout << std::fixed;
+    const float temperature = std::strtof(argv[1], nullptr);
+    const size_t generations = std::strtoull(argv[2], nullptr, 10);
     const std::vector<Pick> all_picks = load_picks("data/drafts/");
-    std::cout << "About to call optimize_variables" << std::endl;
-    const Variables best_variables = optimize_variables(temperature, all_picks, generations, constants);
+    const Variables best_variables = optimize_variables(temperature, all_picks, generations, constants, initial_variables, seed);
     save_variables(best_variables, "output/variables.json");
 }

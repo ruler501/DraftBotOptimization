@@ -8,6 +8,8 @@
 #include <string>
 
 #include <nlohmann/json.hpp>
+#include <thread>
+#include <future>
 
 #include "draftbot_optimization.h"
 
@@ -41,16 +43,16 @@ void populate_constants(const std::string& file_name, Constants& constants) {
     std::vector<std::array<float, EMBEDDING_SIZE>> embeddings(NUM_CARDS, {0});
     for (size_t i=0; i < NUM_CARDS; i++) {
         const nlohmann::json card = carddb.at(i);
-        constants.cmcs[i] = card["cmc"].get<size_t>();
+        constants.cmcs[i] = card["cmc"].get<unsigned char>();
         const auto type_line = card["type"].get<std::string>();
         constants.is_land[i] = type_line.find("Land") != std::string::npos;
-        size_t basic_land_types = 0;
+        unsigned char basic_land_types = 0;
         for (const std::string& land_type : {"Plains", "Island", "Swamp", "Mountain", "Forest"}) {
             if (type_line.find(land_type) != std::string::npos) {
                 basic_land_types++;
             }
         }
-        constants.has_basic_land_types[i] = basic_land_types > 1;
+        constants.has_basic_land_types[i] = basic_land_types >= BASIC_LAND_TYPES_REQUIRED;
         const auto name = card["name"].get<std::string>();
         const auto fetch_land = FETCH_LANDS.find(name);
         constants.is_fetch[i] = fetch_land != FETCH_LANDS.end();
@@ -75,13 +77,13 @@ void populate_constants(const std::string& file_name, Constants& constants) {
             constants.card_colors[i] = our_card_colors;
         }
         const auto parsed_cost = card["parsed_cost"].get<std::vector<std::string>>();
-        std::map<Colors, size_t> color_requirement_map;
+        std::map<Colors, unsigned char> color_requirement_map;
         for (const std::string& symbol : parsed_cost) {
             Colors colors{false};
             if (symbol.find('p') != std::string::npos || symbol.find('2') != std::string::npos) {
                 continue;
             }
-            size_t count = 0;
+            unsigned char count = 0;
             for (size_t j=0; j < COLORS.size(); j++) {
                 if (symbol.find(COLORS[j]) != std::string::npos) {
                     colors[j] = true;
@@ -97,14 +99,14 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                 }
             }
         }
-        ColorRequirement color_requirement{{{{{false}, 0}}}, color_requirement_map.size()};
-        size_t index = 0;
+        ColorRequirement color_requirement{{{{{false}, 0}}}, (unsigned char)color_requirement_map.size()};
+        unsigned char index = 0;
         for (const auto& pair : color_requirement_map) {
             if (index >= color_requirement.first.size()) {
                 std::cerr << "Too many color requirements " << color_requirement_map.size() << " for card " << name << std::endl;
             }
-            std::array<bool, NUM_COMBINATIONS> valid_lands{false};
-            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(pair.first, COLOR_COMBINATIONS[j]);
+            std::array<unsigned char, NUM_COMBINATIONS> valid_lands{false};
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(pair.first, COLOR_COMBINATIONS[j]) ? 1 : 0;
             color_requirement.first[index] = {valid_lands, pair.second};
             index += 1;
         }
@@ -112,12 +114,12 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         const auto elo_iter = card.find("elo");
         if (elo_iter != card.end()) {
             const auto elo = elo_iter->get<float>();
-            INITIAL_RATINGS[i] = (float) std::pow(10, elo / 400 - 3);
+            INITIAL_RATINGS[i] = std::min((float) std::pow(10, elo / 400 - 3), MAX_SCORE);
         } else {
             INITIAL_RATINGS[i] = 1.f;
         }
         const auto embedding_iter = card.find("embedding");
-        if (embedding_iter != card.end()) {
+        if (embedding_iter != card.end() && embedding_iter->size() == 64) {
             embeddings[i] = embedding_iter->get<Embedding>();
         } else {
             embeddings[i] = {0};
@@ -129,20 +131,24 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         for (size_t j=0; j < EMBEDDING_SIZE; j++) length += embeddings[i][j] * embeddings[i][j];
         lengths[i] = std::sqrt(length);
     }
-    for (size_t i=0; i < NUM_CARDS; i++) {
-        for (size_t j=0; j < NUM_CARDS; j++) {
-            float dot_product = 0;
-            for (size_t k=0; k < EMBEDDING_SIZE; k++) {
-                dot_product += embeddings[i][k] * embeddings[j][k];
+    std::cout << "Using " << std::thread::hardware_concurrency() << " threads to load data." << std::endl;
+    std::vector<std::thread> threads;
+    threads.reserve(std::thread::hardware_concurrency());
+    for (size_t offset = 0; offset < std::thread::hardware_concurrency(); offset++) {
+        threads.emplace_back([offset, &embeddings, &constants, &lengths](){
+            for (size_t i=offset; i < NUM_CARDS; i += std::thread::hardware_concurrency()) {
+                for (size_t j=0; j < NUM_CARDS; j++) {
+                    float dot_product = 0;
+                    for (size_t k=0; k < EMBEDDING_SIZE; k++) {
+                        dot_product += embeddings[i][k] * embeddings[j][k];
+                    }
+                    constants.similarities[i][j] = dot_product / lengths[i] / lengths[j];
+                    constants.similarities[j][i] = constants.similarities[i][j];
+                }
             }
-            constants.similarities[i][j] = dot_product / lengths[i] / lengths[j];
-            constants.similarities[j][i] = constants.similarities[i][j];
-        }
+        });
     }
-    float rating_max = 0.f;
-    for (size_t i=0; i < NUM_CARDS; i++) rating_max = std::max(rating_max, INITIAL_RATINGS[i]);
-    rating_max = 10 / rating_max;
-    for (size_t i=0; i < NUM_CARDS; i++) rating_max /= INITIAL_RATINGS[i];
+    for (auto& thread : threads) thread.join();
 }
 
 void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
@@ -200,43 +206,102 @@ void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
     }
 }
 
-Pick parse_pick(nlohmann::json pick_json) {
-    auto _in_pack = pick_json["cardsInPack"].get<std::vector<size_t>>();
-    auto _seen = pick_json["seen"].get<std::vector<size_t>>();
-    auto _picked = pick_json["picked"].get<std::vector<size_t>>();
-    std::array<size_t, MAX_PACK_SIZE> in_pack{std::numeric_limits<size_t>::max()};
-    std::array<size_t, MAX_SEEN> seen{std::numeric_limits<size_t>::max()};
-    std::array<size_t, MAX_PICKED> picked{std::numeric_limits<size_t>::max()};
-    for (size_t i=0; i < _in_pack.size(); i++) in_pack[i] = _in_pack[i];
-    for (size_t i=_in_pack.size(); i < in_pack.size(); i++) in_pack[i] = std::numeric_limits<size_t>::max();
-    for (size_t i=0; i < _seen.size(); i++) seen[i] = _seen[i];
-    for (size_t i=_seen.size(); i < seen.size(); i++) seen[i] = std::numeric_limits<size_t>::max();
-    for (size_t i=0; i < _picked.size(); i++) picked[i] = _picked[i];
-    for (size_t i=_picked.size(); i < picked.size(); i++) picked[i] = std::numeric_limits<size_t>::max();
-    return {in_pack, seen, picked, pick_json["pack"].get<size_t>(), pick_json["pick"].get<size_t>(),
-            pick_json["packSize"].get<size_t>(), pick_json["packs"].get<size_t>(), pick_json["chosenCard"].get<size_t>()};
+std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
+    std::shared_ptr<Pick> result = std::make_shared<Pick>();
+    auto _in_pack = pick_json["cardsInPack"];
+    if (_in_pack.size() > result->in_pack.size()) {
+//        std::cerr << "Pack too big: " << _in_pack.size() << std::endl;
+        return {};
+    }
+    for (size_t i=0; i < _in_pack.size(); i++) {
+        auto index = _in_pack.at(i);
+        if (!index.is_null()) result->in_pack[i] = index.get<index_type>();
+        else return {};
+    }
+    for (size_t i=_in_pack.size(); i < result->in_pack.size(); i++) result->in_pack[i] = std::numeric_limits<index_type>::max();
+    auto _seen = pick_json["seen"];
+    if (_seen.size() > result->seen.size()) {
+//        std::cerr << "Seen too big: " << _seen.size() << std::endl;
+        return {};
+    }
+    for (size_t i=0; i < _seen.size(); i++) {
+        auto index = _seen.at(i);
+        if (!index.is_null()) result->seen[i] = index.get<index_type>();
+        else return {};
+    }
+    for (size_t i=_seen.size(); i < result->seen.size(); i++) result->seen[i] = std::numeric_limits<index_type>::max();
+    auto _picked = pick_json["picked"];
+    if (_picked.size() > result->picked.size()) {
+//        std::cerr << "Picked too big: " << _picked.size() << std::endl;
+        return {};
+    }
+    for (size_t i=0; i < _picked.size(); i++) {
+        auto index = _picked.at(i);
+        if (!index.is_null()) result->picked[i] = index.get<index_type>();
+        else return {};
+    }
+    for (size_t i=_picked.size(); i < result->picked.size(); i++) result->picked[i] = std::numeric_limits<index_type>::max();
+    nlohmann::json pack = pick_json["pack"];
+    if (!pack.is_null()) result->pack_num = pack.get<unsigned char>();
+    else return {};
+    nlohmann::json pick = pick_json["pick"];
+    if (!pick.is_null()) result->pick_num = pick.get<unsigned char>();
+    else return {};
+    nlohmann::json pack_size = pick_json["packSize"];
+    if (!pack_size.is_null()) result->pack_size = pack_size.get<unsigned char>();
+    else return {};
+    nlohmann::json packs = pick_json["packs"];
+    if (!packs.is_null()) result->packs = packs.get<unsigned char>();
+    else return {};
+    nlohmann::json chosen_card = pick_json["chosenCard"];
+    if (!chosen_card.is_null()) result->chosen_card = chosen_card.get<index_type>();
+    else return {};
+    return result;
 }
 
 std::vector<Pick> load_picks(const std::string& folder) {
-    std::vector<Pick> results;
-    for (size_t i=1; i < 6; i++) {
-        std::ostringstream path_stream;
-        path_stream << folder << i << ".json";
-        std::string path = path_stream.str();
-        std::cout << "Loading picks file " << path << std::endl;
-        nlohmann::json drafts;
-        std::ifstream drafts_file(path);
-        drafts_file >> drafts;
-        for (const auto& draft_entry : drafts.items()) {
-            for (const auto& pick_entry : draft_entry.value()["picks"].items()) {
-                if (pick_entry.value()["cardsInPack"].size() > 1) {
-                    results.push_back(parse_pick(pick_entry.value()));
+    std::vector<Pick> final_results;
+    std::vector<std::future<std::vector<Pick>>> futures;
+    std::vector<std::thread> threads;
+    threads.reserve(std::thread::hardware_concurrency());
+    futures.reserve(std::thread::hardware_concurrency());
+    for (size_t offset=0; offset < std::thread::hardware_concurrency(); offset++) {
+        std::packaged_task<std::vector<Pick>()> task(
+                [offset, &folder]{
+            std::vector<Pick> results;
+            for(size_t i=offset; i < NUM_PICK_FILES; i += std::thread::hardware_concurrency()) {
+                std::string path;
+                std::ostringstream path_stream;
+                path_stream << folder << i << ".json";
+                path = path_stream.str();
+                if(i % 53 == 0) std::cout << "Loading picks file " << path << std::endl;
+                nlohmann::json drafts;
+                {
+                    std::ifstream drafts_file(path);
+                    drafts_file >> drafts;
+                }
+                results.reserve(results.size() + drafts.size());
+                for (const auto& draft_entry : drafts.items()) {
+                    for (const auto& pick_entry : draft_entry.value()["picks"].items()) {
+                        if (pick_entry.value()["cardsInPack"].size() > 1) {
+                            std::shared_ptr<Pick> pick = parse_pick(pick_entry.value());
+                            if (pick) results.push_back(*pick);
+                        }
+                    }
                 }
             }
-        }
-        std::cout << "Done loading " << i << std::endl;
+            return results;
+        });
+        futures.push_back(task.get_future());
+        threads.emplace_back(std::move(task));
     }
-    return results;
+    for (size_t i=0; i < threads.size(); i++) {
+        threads[i].join();
+        futures[i].wait();
+        std::vector<Pick> results = futures[i].get();
+        final_results.insert(final_results.end(), results.begin(), results.end());
+    }
+    return final_results;
 }
 
 void save_variables(const Variables& variables, const std::string& file_name) {
@@ -250,6 +315,45 @@ void save_variables(const Variables& variables, const std::string& file_name) {
     result["probToInclude"] = variables.prob_to_include;
     result["similarityClip"] = variables.similarity_clip;
     result["ratings"] = variables.ratings;
+    result["isFetchMultiplier"] = variables.is_fetch_multiplier;
+    result["hasBasicTypesMultiplier"] = variables.has_basic_types_multiplier;
+    result["isRegularLandMultiplier"] = variables.is_regular_land_multiplier;
+    result["equalCardsSynergy"] = variables.equal_cards_synergy;
     std::ofstream output_file(file_name);
-    output_file << result;
+    if (output_file) {
+        output_file << result;
+        std::cout << "Saved variables to " << file_name << std::endl;
+    } else {
+        std::cerr << "Failed to open " << file_name << " for writing" << std::endl;
+    }
+}
+
+Variables load_variables(const std::string& file_name) {
+    std::cout << "Loading variables from " << file_name << std::endl;
+    Variables result;
+    nlohmann::json variables;
+    std::ifstream variables_file(file_name);
+    variables_file >> variables;
+    result.rating_weights = variables["ratingWeights"].get<Weights>();
+    result.pick_synergy_weights = variables["pickSynergyWeights"].get<Weights>();
+    result.fixing_weights = variables["fixingWeights"].get<Weights>();
+    result.internal_synergy_weights = variables["internalSynergyWeights"].get<Weights>();
+    result.openness_weights = variables["opennessWeights"].get<Weights>();
+    result.colors_weights = variables["colorsWeights"].get<Weights>();
+    result.prob_to_include = variables["probToInclude"].get<float>();
+    result.prob_multiplier = 1 / (1 - result.prob_to_include);
+    result.similarity_clip = variables["similarityClip"].get<float>();
+    result.similarity_multiplier = 1 / (1 - result.similarity_clip);
+    result.ratings = variables["ratings"].get<std::array<float, NUM_CARDS>>();
+    result.is_fetch_multiplier = variables["isFetchMultiplier"].get<float>();
+    result.has_basic_types_multiplier = variables["hasBasicTypesMultiplier"].get<float>();
+    result.is_regular_land_multiplier = variables["isRegularLandMultiplier"].get<float>();
+    result.equal_cards_synergy = variables["equalCardsSynergy"].get<float>();
+    float max_rating = 0;
+    for (const float rating : result.ratings) max_rating = std::max(max_rating, rating);
+    float scaling_factor = 10.f / max_rating;
+    for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] *= scaling_factor;
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.rating_weights[i][j] /= scaling_factor;
+    std::cout << "Loaded max rating was " << max_rating << " which gave a scaling factor of " << scaling_factor << std::endl;
+    return result;
 }

@@ -32,13 +32,36 @@ set(JSON_ImplicitConversions OFF CACHE INTERNAL "")
 # discouraged (although not necessarily well documented as such) to use
 # include(...) for pulling in other CMake projects anyways.
 add_subdirectory(extern/json)
-
-add_executable(DraftBotOptimization draftbot_optimization.cpp draftbot_optimization.h parse_json.cpp)
-
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-target_link_libraries(DraftBotOptimization PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
+
+set(OPTIMIZATION_ALGORITHMS Genetic CrossEntropy DifferentialEvolution)
+
+foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
+    set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
+    add_executable(${TARGET_NAME} draftbot_optimization.cpp parse_json.cpp algorithms/shared/util.cpp)
+    if(ALGORITHM STREQUAL "Genetic")
+        target_sources(${TARGET_NAME} PRIVATE algorithms/genetic.cpp)
+    elseif(ALGORITHM STREQUAL "CrossEntropy")
+        target_sources(${TARGET_NAME} PRIVATE algorithms/cross_entropy_method.cpp)
+    elseif(ALGORITHM STREQUAL "DifferentialEvolution")
+        target_sources(${TARGET_NAME} PRIVATE algorithms/differential_evolution.cpp)
+    endif()
+    target_include_directories(${TARGET_NAME} PRIVATE extern/concurrentqueue)
+
+    target_link_libraries(${TARGET_NAME} PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
+
+    if (MSVC)
+    else()
+        target_compile_options(${TARGET_NAME} PRIVATE -O2 -g -march=native)
+        target_link_options(${TARGET_NAME} PRIVATE -O2 -g)
+    endif()
+
+    set_target_properties (${TARGET_NAME} PROPERTIES CXX_STANDARD 14
+                                                     CXX_STANDARD_REQUIRED ON
+                                                     CXX_EXTENSIONS OFF)
+endforeach()
 
 option(USE_SYCL "Use the SYCL implementation" OFF)
 
@@ -46,19 +69,11 @@ if(USE_SYCL)
     # Behavioural options for the project
     set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
     find_package(ComputeCpp)
-    target_compile_definitions(DraftBotOptimization PRIVATE USE_SYCL)
-    target_include_directories (DraftBotOptimization PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0/include")
-    add_sycl_to_target(TARGET DraftBotOptimization
-                       SOURCES draftbot_optimization.cpp draftbot_optimization.h)
+    foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
+        set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
+        target_compile_definitions(${TARGET_NAME} PRIVATE USE_SYCL)
+        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0/include")
+        add_sycl_to_target(TARGET ${TARGET_NAME}
+                           SOURCES draftbot_optimization.cpp)
+    endforeach()
 endif()
-
-if (MSVC)
-    target_link_options(DraftBotOptimization PRIVATE /PROFILE)
-else()
-    target_compile_options(DraftBotOptimization PRIVATE -O2 -g -march=native)
-    target_link_options(DraftBotOptimization PRIVATE -O2 -g)
-endif()
-
-set_target_properties (DraftBotOptimization PROPERTIES CXX_STANDARD 14
-                                                       CXX_STANDARD_REQUIRED ON
-                                                       CXX_EXTENSIONS OFF)
