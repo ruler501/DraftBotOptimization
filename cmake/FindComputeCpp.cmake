@@ -140,7 +140,8 @@ if(NOT ComputeCpp_FOUND)
   return()
 endif()
 
-list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -O2 -mllvm -inline-threshold=1000 -intelspirmetadata)
+list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -O3 -march=native -mllvm -inline-threshold=10000 -fsycl-ih-last -Xclang
+                                             -intelspirmetadata -cl-mad-enable)
 mark_as_advanced(COMPUTECPP_DEVICE_COMPILER_FLAGS)
 
 if(CMAKE_CROSSCOMPILING)

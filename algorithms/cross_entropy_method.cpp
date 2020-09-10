@@ -11,6 +11,7 @@
 #include <chrono>
 
 #include "../draftbot_optimization.h"
+#include "shared/parameters.h"
 
 struct NormalDistParameters {
     float mean;
@@ -60,7 +61,7 @@ struct WeightsNormalDistParameters {
     void assign_parameters(const Weights& weights, Callable assignment_function) {
         for (size_t i=0; i < PACKS; i++) {
             for (size_t j=0; j < PACK_SIZE; j++) {
-
+                assignment_function(parameters[i][j], weights[i][j]);
             }
         }
     }
@@ -73,7 +74,9 @@ struct VariablesNormalDistParameters {
     WeightsNormalDistParameters internal_synergy_weights_parameters;
     WeightsNormalDistParameters pick_synergy_weights_parameters;
     WeightsNormalDistParameters openness_weights_parameters;
+#ifdef OPTIMIZE_RATINGS
     std::array<NormalDistParameters, NUM_CARDS> ratings_parameters{};
+#endif
     NormalDistParameters prob_to_include_parameters{INITIAL_UNIT_MEAN, INITIAL_UNIT_STDDEV};
     NormalDistParameters  similarity_clip_parameters{INITIAL_UNIT_MEAN, INITIAL_UNIT_STDDEV};
     NormalDistParameters is_fetch_multiplier_parameters{INITIAL_UNIT_MEAN, INITIAL_UNIT_STDDEV};
@@ -81,9 +84,11 @@ struct VariablesNormalDistParameters {
     NormalDistParameters is_regular_land_multiplier_parameters{INITIAL_UNIT_MEAN, INITIAL_UNIT_STDDEV};
     NormalDistParameters equal_cards_synergy_parameters{INITIAL_RATING_MEAN, INITIAL_RATING_STDDEV};
 
+#ifdef OPTIMIZE_RATINGS
     VariablesNormalDistParameters() {
         for (size_t i=0; i < NUM_CARDS; i++) ratings_parameters[i] = {INITIAL_RATING_MEAN, INITIAL_RATING_STDDEV};
     }
+#endif
 
     template <typename Generator>
     Variables operator()(Generator& gen) {
@@ -94,7 +99,9 @@ struct VariablesNormalDistParameters {
         result.internal_synergy_weights = internal_synergy_weights_parameters(gen);
         result.pick_synergy_weights = pick_synergy_weights_parameters(gen);
         result.openness_weights = openness_weights_parameters(gen);
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = std::min(std::max(ratings_parameters[i](gen), 0.f), MAX_SCORE);
+#endif
         result.prob_to_include = std::min(std::max(prob_to_include_parameters(gen), 0.f), 0.99f);
         result.prob_multiplier = 1 / (1 - result.prob_to_include);
         result.similarity_clip = std::min(std::max(similarity_clip_parameters(gen), 0.f), 0.99f);
@@ -115,7 +122,9 @@ struct VariablesNormalDistParameters {
         result.internal_synergy_weights = internal_synergy_weights_parameters.extract_parameter(retrieval_function);
         result.openness_weights = openness_weights_parameters.extract_parameter(retrieval_function);
         result.colors_weights = colors_weights_parameters.extract_parameter(retrieval_function);
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = retrieval_function(ratings_parameters[i]);
+#endif
         result.similarity_clip = retrieval_function(similarity_clip_parameters);
         result.similarity_multiplier = 1 / (1 - result.similarity_clip);
         result.prob_to_include = retrieval_function(prob_to_include_parameters);
@@ -143,7 +152,9 @@ struct VariablesNormalDistParameters {
         internal_synergy_weights_parameters.assign_parameters(means.internal_synergy_weights, assignment_function);
         openness_weights_parameters.assign_parameters(means.openness_weights, assignment_function);
         colors_weights_parameters.assign_parameters(means.colors_weights, assignment_function);
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) assignment_function(ratings_parameters[i], means.ratings[i]);
+#endif
         assignment_function(prob_to_include_parameters, means.prob_to_include);
         assignment_function(similarity_clip_parameters, means.similarity_clip);
         assignment_function(is_fetch_multiplier_parameters, means.is_fetch_multiplier);
@@ -179,7 +190,9 @@ Variables zeroed_variables() {
     result.pick_synergy_weights = zeroed_weights();
     result.internal_synergy_weights = zeroed_weights();
     result.openness_weights = zeroed_weights();
+#ifdef OPTIMIZE_RATINGS
     for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = 0;
+#endif
     result.similarity_clip = 0;
     result.similarity_multiplier = 1;
     result.prob_to_include = 0;
@@ -262,7 +275,9 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             average_weights(sum_values.internal_synergy_weights, variables.internal_synergy_weights);
             average_weights(sum_values.colors_weights, variables.colors_weights);
             average_weights(sum_values.openness_weights, variables.openness_weights);
+#ifdef OPTIMIZE_RATINGS
             for (size_t j = 0; j < NUM_CARDS; j++) sum_values.ratings[j] += variables.ratings[j] / KEEP_BEST;
+#endif
             sum_values.prob_to_include += variables.prob_to_include / KEEP_BEST;
             sum_values.similarity_clip += variables.similarity_clip / KEEP_BEST;
             sum_values.is_fetch_multiplier += variables.is_fetch_multiplier / KEEP_BEST;
@@ -279,7 +294,9 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             variance_weights(var_values.internal_synergy_weights, variables.internal_synergy_weights, sum_values.internal_synergy_weights);
             variance_weights(var_values.colors_weights, variables.colors_weights, sum_values.colors_weights);
             variance_weights(var_values.openness_weights, variables.openness_weights, sum_values.openness_weights);
+#ifdef OPTIMIZE_RATINGS
             for (size_t j = 0; j < NUM_CARDS; j++) var_values.ratings[j] += std::pow(variables.ratings[j] - sum_values.ratings[j], 2) / KEEP_BEST;
+#endif
             var_values.prob_to_include += std::pow(variables.prob_to_include - sum_values.prob_to_include, 2) / KEEP_BEST;
             var_values.similarity_clip += std::pow(variables.similarity_clip - sum_values.similarity_clip, 2) / KEEP_BEST;
             var_values.is_fetch_multiplier += std::pow(variables.is_fetch_multiplier - sum_values.is_fetch_multiplier, 2) / KEEP_BEST;
@@ -293,7 +310,9 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         dist.internal_synergy_weights_parameters = make_weight_dist(sum_values.internal_synergy_weights, var_values.internal_synergy_weights);
         dist.openness_weights_parameters = make_weight_dist(sum_values.openness_weights, var_values.openness_weights);
         dist.colors_weights_parameters = make_weight_dist(sum_values.colors_weights, var_values.colors_weights);
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) dist.ratings_parameters[i] = {sum_values.ratings[i], std::sqrt(var_values.ratings[i])};
+#endif
         dist.prob_to_include_parameters = {sum_values.prob_to_include, std::sqrt(var_values.prob_to_include)};
         dist.similarity_clip_parameters = {sum_values.similarity_clip, std::sqrt(var_values.similarity_clip)};
         dist.is_fetch_multiplier_parameters = {sum_values.is_fetch_multiplier, std::sqrt(var_values.is_fetch_multiplier)};

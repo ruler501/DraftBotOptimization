@@ -12,7 +12,6 @@
 #include <iomanip>
 #include <iostream>
 #include <random>
-#include <sstream>
 #include <thread>
 #include <vector>
 #include <numeric>
@@ -138,16 +137,17 @@ float calculate_synergy(const index_type card_index_1, const index_type card_ind
                                                                     1 - variables.similarity_clip);
     if (card_index_1 == card_index_2) return variables.equal_cards_synergy;
     const float transformed = 1 / (1 - scaled) - 1;
-//    std::cout << "Synergy between " << card_index_1 << " and " << card_index_2 << " with similarity " << constants.similarities[card_index_1][card_index_2]
-//              << ", similarity_clip " << variables.similarity_clip << ", and transformed into " << transformed << std::endl;
     if (ISNAN(transformed)) return 0;
     else return std::min(transformed, MAX_SCORE);
 }
 
-float rating_oracle(const index_type card_index, const Lands&, const Variables& variables, const Pick& pick, const Constants&,
+float rating_oracle(const index_type card_index, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
                     const float probability) {
-//    std::cout << "Rating " << variables.ratings[pick.in_pack[card_index]] << " Probability: " << probability << std::endl;
+#ifdef OPTIMIZE_RATINGS
     return probability * variables.ratings[pick.in_pack[card_index]];
+#else
+    return probability * constants.ratings[pick.in_pack[card_index]];
+#endif
 }
 
 float pick_synergy_oracle(const index_type, const Lands&, const Variables&, const Pick&,
@@ -196,9 +196,13 @@ float sum_gated_rating(const Variables& variables, const std::array<index_type, 
                        const Constants& constants, const std::array<float, Size> probabilities,
                        const index_type num_valid_indices) {
     float result = 0;
+    if (num_valid_indices == 0) return 0;
     for (index_type i=0; i < num_valid_indices; i++) {
+#ifdef OPTIMIZE_RATINGS
         result += variables.ratings[indices[i]] * probabilities[i];
-//        std::cout << variables.ratings[indices[i]] << "*" << probabilities[i] << "(" << indices[i] << "); ";
+#else
+        result += constants.ratings[indices[i]] * probabilities[i];
+#endif
     }
     return result / (float) num_valid_indices;
 }
@@ -231,31 +235,22 @@ float get_score(const index_type card_index, const Lands& lands, const Variables
                 std::max(get_casting_probability(lands, pick.seen[i], constants) - variables.prob_to_include, 0.f)
                 * variables.prob_multiplier;
     }
-//    std::cout << "Picked probabilities: " << picked_probabilities[0];
-//    for (size_t i=1; i < num_valid_picked_indices; i++) std::cout << ", " << picked_probabilities[i];
-//    std::cout << std::endl;
     float card_casting_probability = get_casting_probability(lands, pick.in_pack[card_index], constants);
     const float rating_score = rating_oracle(card_index, lands, variables, pick, constants, card_casting_probability);
-//    return rating_score*rating_weight;
 //    std::cout << rating_score << "*" << rating_weight;
     const float pick_synergy_score = pick_synergy_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
                                                          num_valid_picked_indices, card_casting_probability, pick_synergies);
-//    return pick_synergy_score*pick_synergy_weight;
 //    std::cout << " + " << pick_synergy_score << "*" << pick_synergy_weight;
     const float fixing_score = fixing_oracle(card_index, lands, variables, pick, constants);
-//    return fixing_score*fixing_weight;
 //    std::cout << " + " << fixing_score << "*" << fixing_weight;
     const float internal_synergy_score = internal_synergy_oracle(card_index, lands, variables, pick, constants,
                                                                  picked_probabilities, num_valid_picked_indices, internal_synergies);
-//    return internal_synergy_score*internal_synergy_weight;
 //    std::cout << " + " << internal_synergy_score << "*" << internal_synergy_weight;
     const float openness_score = openness_oracle(card_index, lands, variables, pick, constants, seen_probabilities,
                                                  num_valid_seen_indices);
-//    return openness_score*openness_weight;
 //    std::cout << " + " << openness_score << "*" << openness_weight;
     const float colors_score = colors_oracle(card_index, lands, variables, pick, constants, picked_probabilities,
                                              num_valid_picked_indices);
-//    return colors_score*colors_weight;
 //    std::cout << " + " << colors_score << "*" << colors_weight;
 //    std::cout << std::endl;
     return rating_score*rating_weight + pick_synergy_score*pick_synergy_weight + fixing_score*fixing_weight
@@ -394,20 +389,11 @@ void run_simulations_on_device(const cl::sycl::device& device,
                                const Constants& constants,
                                const float temperature,
                                std::vector<std::vector<std::pair<double, bool>>>& results) {
-    const auto start = std::chrono::high_resolution_clock::now();
     cl::sycl::queue sycl_queue{device};
     const size_t num_groups = sycl_queue.get_device().get_info<cl::sycl::info::device::max_compute_units>();
-    // getting the maximum work group size per thread
     const size_t work_group_size = sycl_queue.get_device().get_info<cl::sycl::info::device::max_work_group_size>();
-    // building the best number of global thread
     const auto total_threads = num_groups * work_group_size;
-//    const size_t pick_group_threads = PICKS_PER_GENERATION;
-//    const size_t variables_to_process = total_threads / 2048;
-    const size_t pick_group_threads = 2048;
-//    const size_t variables_to_process = total_threads / pick_group_threads;
-    const size_t variables_to_process = 2 * total_threads / pick_group_threads;
-//    auto variables_to_process = (size_t)std::ceil(PICKS_PER_OPENCL_THREAD * total_threads / (float)PICKS_PER_GENERATION);
-//    size_t pick_group_threads = total_threads / variables_to_process;
+    const size_t variables_to_process = (size_t)(FRACTION_OF_WORK_GROUPS * total_threads / 1024);
     std::vector<Variables> iteration_variables;
     iteration_variables.reserve(variables_to_process);
     std::vector<size_t> variable_indices;
@@ -415,34 +401,19 @@ void run_simulations_on_device(const cl::sycl::device& device,
     cl::sycl::buffer<Pick, 1> picks_buffer(picks.data(), sycl::range<1>(picks.size()));
     cl::sycl::buffer<Constants, 1> constants_buffer(&constants, sycl::range<1>(1));
     cl::sycl::buffer<std::pair<double, bool>, 2> output_buffer{{variables_to_process, PICKS_PER_GENERATION}};
-    auto device_id = sycl_queue.get_device().get_info<cl::sycl::info::device::vendor_id>();
-    auto pre_loop_start = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff1 = pre_loop_start - start;
-    std::cout << "Setting up loop for device " << device_id << " took " << diff1.count() << " seconds" << std::endl;
-//    std::cout << "Device: " << device_id << " has "
-//              << total_threads << " total threads made up of " << num_groups << " work groups of size " << work_group_size
-//              << " we will have threads in the range (" << variables_to_process << ", " << pick_group_threads
-//              << ") calculating losses for a total of " << variables_to_process * pick_group_threads << " threads" << std::endl;
-    auto previous_loop_end = std::chrono::high_resolution_clock::now();
     while (true) {
-        const auto loop_start = std::chrono::high_resolution_clock::now();
-        const std::chrono::duration<double> diff2 = loop_start - previous_loop_end;
-        std::cout << "Cleanup time for previous loop took " << diff2.count() << " seconds" << std::endl;
         variable_indices.clear();
         iteration_variables.clear();
         for (size_t i=0; i < variables_to_process; i++) {
             size_t current_variables_index = 0;
             if(!concurrent_queue.try_dequeue_from_producer(producer_token, current_variables_index)) {
-                auto time_to_fail = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double> diff = time_to_fail - loop_start;
-                std::cout << "Finding out queue was empty took " << diff.count() << " seconds" << std::endl;
                 break;
             }
             variable_indices.push_back(current_variables_index);
             iteration_variables.push_back(variables[current_variables_index]);
         }
         if (variable_indices.empty()) break;
-        cl::sycl::buffer<Variables, 1> variables_buffer(variables.data(), sycl::range<1>(variables_to_process));
+        cl::sycl::buffer<Variables, 1> variables_buffer(iteration_variables.data(), sycl::range<1>(variables_to_process));
         try {
             /* Submit a command_group to execute from the queue. */
             sycl_queue.submit([&](cl::sycl::handler &cgh) {
@@ -459,7 +430,7 @@ void run_simulations_on_device(const cl::sycl::device& device,
                                                                  const Constants &constants = constants_ptr[0];
                                                                  const Pick &pick = picks_ptr[item_id[1]];
                                                                  //for(size_t i=item_id[1]; i < PICKS_PER_GENERATION; i += item_id.get_range()[1]) {
-                                                                     output_ptr[item_id[0]][item_id[1]] = calculate_loss(
+                                                                     output_ptr[item_id] = calculate_loss(
                                                                              pick, variables, temperature, constants);
 //                                                                 }
                                                              });
@@ -475,14 +446,7 @@ void run_simulations_on_device(const cl::sycl::device& device,
             std::cerr << error.what() << std::endl;
             std::rethrow_exception(std::current_exception());
         }
-        const auto loop_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = loop_end - loop_start;
-        std::cout << "Loop on device " << device_id << " took " << diff.count() << " seconds" << std::endl;
-        previous_loop_end = loop_end;
     }
-    const auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end - start;
-    std::cout << "Processing on device " << device_id << " took " << diff.count() << " seconds" << std::endl;
 }
 #endif
 
@@ -503,8 +467,6 @@ std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::ve
         auto devices = plat.get_devices();
         threads.reserve(devices.size());
         for (const auto& device : devices) {
-//            run_simulations_on_device(device, concurrent_queue, producer_token,
-//                                      variables, picks, *constants, temperature, pick_results);
             threads.emplace_back([&]{ run_simulations_on_device(device, concurrent_queue, producer_token,
                                                                 variables, picks, *constants, temperature, pick_results); });
         }

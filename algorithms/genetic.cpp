@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../draftbot_optimization.h"
+#include "shared/parameters.h"
 #include "shared/util.h"
 
 Weights average_crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64& gen) {
@@ -40,7 +41,9 @@ Variables average_crossover_variables(const Variables& variables1, const Variabl
     result.has_basic_types_multiplier = (variables1.has_basic_types_multiplier + variables2.has_basic_types_multiplier) / 2;
     result.is_regular_land_multiplier = (variables1.is_regular_land_multiplier + variables2.is_regular_land_multiplier) / 2;
     result.equal_cards_synergy = (variables1.equal_cards_synergy + variables2.equal_cards_synergy) / 2;
+#ifdef OPTIMIZE_RATINGS
     for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = (variables1.ratings[i] + variables2.ratings[i]) / 2;
+#endif
     return result;
 }
 
@@ -66,9 +69,11 @@ Variables crossover_variables(const Variables& v1, const Variables& v2, Generato
     result.internal_synergy_weights = crossover_weights(v1.internal_synergy_weights, v2.internal_synergy_weights, gen);
     result.openness_weights = crossover_weights(v1.openness_weights, v2.openness_weights, gen);
     result.colors_weights = crossover_weights(v1.colors_weights, v2.colors_weights, gen);
+#ifdef OPTIMIZE_RATINGS
     for (size_t i=0; i < NUM_CARDS; i++) {
         if (coin(gen) == 0) result.ratings[i] = v2.ratings[i];
     }
+#endif
     if (coin(gen) == 0) {
         result.prob_to_include = v2.prob_to_include;
         result.prob_multiplier = v2.prob_multiplier;

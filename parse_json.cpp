@@ -48,9 +48,7 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         constants.is_land[i] = type_line.find("Land") != std::string::npos;
         unsigned char basic_land_types = 0;
         for (const std::string& land_type : {"Plains", "Island", "Swamp", "Mountain", "Forest"}) {
-            if (type_line.find(land_type) != std::string::npos) {
-                basic_land_types++;
-            }
+            if (type_line.find(land_type) != std::string::npos) basic_land_types++;
         }
         constants.has_basic_land_types[i] = basic_land_types >= BASIC_LAND_TYPES_REQUIRED;
         const auto name = card["name"].get<std::string>();
@@ -114,9 +112,16 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         const auto elo_iter = card.find("elo");
         if (elo_iter != card.end()) {
             const auto elo = elo_iter->get<float>();
+#ifdef OPTIMIZE_RATINGS
             INITIAL_RATINGS[i] = std::min((float) std::pow(10, elo / 400 - 3), MAX_SCORE);
         } else {
             INITIAL_RATINGS[i] = 1.f;
+#else
+            constants.ratings[i] = std::sqrt(std::pow(10.f, elo / 400 - 4));
+//            constants.ratings[i] = std::min((float) std::pow(10, elo / 400 - 4), MAX_SCORE);
+        } else {
+            constants.ratings[i] = std::sqrt(0.1f);
+#endif
         }
         const auto embedding_iter = card.find("embedding");
         if (embedding_iter != card.end() && embedding_iter->size() == 64) {
@@ -314,7 +319,9 @@ void save_variables(const Variables& variables, const std::string& file_name) {
     result["colorsWeights"] = variables.colors_weights;
     result["probToInclude"] = variables.prob_to_include;
     result["similarityClip"] = variables.similarity_clip;
+#ifdef OPTIMIZE_RATINGS
     result["ratings"] = variables.ratings;
+#endif
     result["isFetchMultiplier"] = variables.is_fetch_multiplier;
     result["hasBasicTypesMultiplier"] = variables.has_basic_types_multiplier;
     result["isRegularLandMultiplier"] = variables.is_regular_land_multiplier;
@@ -344,16 +351,19 @@ Variables load_variables(const std::string& file_name) {
     result.prob_multiplier = 1 / (1 - result.prob_to_include);
     result.similarity_clip = variables["similarityClip"].get<float>();
     result.similarity_multiplier = 1 / (1 - result.similarity_clip);
+#ifdef OPTIMIZE_RATINGS
     result.ratings = variables["ratings"].get<std::array<float, NUM_CARDS>>();
+#endif
     result.is_fetch_multiplier = variables["isFetchMultiplier"].get<float>();
     result.has_basic_types_multiplier = variables["hasBasicTypesMultiplier"].get<float>();
     result.is_regular_land_multiplier = variables["isRegularLandMultiplier"].get<float>();
     result.equal_cards_synergy = variables["equalCardsSynergy"].get<float>();
+#ifdef OPTIMIZE_RATINGS
     float max_rating = 0;
     for (const float rating : result.ratings) max_rating = std::max(max_rating, rating);
     float scaling_factor = 10.f / max_rating;
     for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] *= scaling_factor;
     for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.rating_weights[i][j] /= scaling_factor;
-    std::cout << "Loaded max rating was " << max_rating << " which gave a scaling factor of " << scaling_factor << std::endl;
+#endif
     return result;
 }

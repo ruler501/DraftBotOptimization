@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../draftbot_optimization.h"
+#include "shared/parameters.h"
 #include "shared/util.h"
 
 template <typename Generator>
@@ -108,9 +109,11 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             crossover_weights(y.internal_synergy_weights, a.internal_synergy_weights, b.internal_synergy_weights, c.internal_synergy_weights, gen);
             crossover_weights(y.openness_weights, a.openness_weights, b.openness_weights, c.openness_weights, gen);
             crossover_weights(y.colors_weights, a.colors_weights, b.colors_weights, c.colors_weights, gen);
+#ifdef OPTIMIZE_RATINGS
             for (size_t i=0; i < NUM_CARDS; i++) {
                 if (unit_dist(gen) < CROSSOVER_RATE) y.ratings[i] = std::min(std::max(a.ratings[i] + DIFFERENTIAL_VOLATILITY * (b.ratings[i] - c.ratings[i]), 0.f), MAX_SCORE);
             }
+#endif
             if (unit_dist(gen) < CROSSOVER_RATE) y.prob_to_include = std::min(std::max(a.prob_to_include + DIFFERENTIAL_VOLATILITY * (b.prob_to_include - c.prob_to_include), 0.f), 0.99f);
             y.prob_multiplier = 1 / (1 - y.prob_to_include);
             if (unit_dist(gen) < CROSSOVER_RATE) y.similarity_clip = std::min(std::max(a.similarity_clip + DIFFERENTIAL_VOLATILITY * (b.similarity_clip - c.similarity_clip), 0.f), 0.99f);

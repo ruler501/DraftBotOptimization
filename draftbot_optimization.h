@@ -1,58 +1,33 @@
 //
 // Created by Devon Richards on 9/3/2020.
 //
-
 #ifndef DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H
 #define DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H
 #include <array>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
 // Algorithmic Hyperparameters
 constexpr float MAX_SCORE = 10.f;
-constexpr float MIN_WEIGHT = -10.f;
-constexpr float MAX_WEIGHT = 30.f;
+constexpr float MIN_WEIGHT = 0.f;
+constexpr float MAX_WEIGHT = 10.f;
 
 // Output Parameters
-constexpr size_t WIDTH = 5;
+constexpr size_t WIDTH = 8;
 constexpr size_t PRECISION = 5;
 
-// Performance Parameters
-constexpr size_t PICKS_PER_OPENCL_THREAD = 8;
-
 // Optimization Hyperparameters
-constexpr size_t POPULATION_SIZE = (34 + 24) * 2;
-constexpr size_t KEEP_BEST = 50;
+constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
+constexpr size_t POPULATION_SIZE = (size_t)((68 + 48) * FRACTION_OF_WORK_GROUPS);
+constexpr size_t KEEP_BEST = (size_t)(POPULATION_SIZE * 0.65);
 constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.25;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 5.0;
-
-// Genetic Algorithm Hyperparameters
-constexpr float WEIGHT_VOLATILITY = (MAX_WEIGHT - MIN_WEIGHT) / 20;
-constexpr float CLIP_VOLATILITY = 1 / 20.f;
-constexpr float RATING_VOLATILITY = MAX_SCORE / 40;
-constexpr float MULTIPLIER_VOLATILITY = 1 / 20.f;
-constexpr size_t WEIGHT_INV_PROB_TO_CHANGE = 10;
-constexpr size_t CLIP_INV_PROB_TO_CHANGE = 10;
-constexpr size_t RATING_INV_PROB_TO_CHANGE = 5;
-constexpr size_t MULTIPLIER_INV_PROB_TO_CHANGE = 10;
-constexpr size_t EQUAL_CARDS_INV_PROB_TO_CHANGE = 5;
-constexpr size_t NUM_INITIAL_MUTATIONS = 10;
-
-// Cross-Entropy Method Hyperparameters
-constexpr float INITIAL_WEIGHT_MEAN = 15.f;
-constexpr float INITIAL_WEIGHT_STDDEV = 12.f;
-constexpr float INITIAL_RATING_MEAN = 5.f;
-constexpr float INITIAL_RATING_STDDEV = 3.f;
-constexpr float INITIAL_UNIT_MEAN = 0.5f;
-constexpr float INITIAL_UNIT_STDDEV = 0.3f;
-
-// Differential Evolution Hyperparameters
-constexpr float CROSSOVER_RATE = 0.9f;
-constexpr float DIFFERENTIAL_VOLATILITY = 0.8f;
 
 // Architectural Parameters
 constexpr size_t NUM_CARDS = 21467;
@@ -87,104 +62,104 @@ constexpr float INITIAL_HAS_BASIC_TYPES_MULTIPLIER = 0.75f;
 constexpr float INITIAL_IS_REGULAR_LAND_MULTIPLIER = 0.5f;
 constexpr float INITIAL_EQUAL_CARDS_SYNERGY = 2.5f;
 constexpr Weights INITIAL_RATING_WEIGHTS{{
-                                                 {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                                 {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                 {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                         }};
+    {5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f},
+    {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
+    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+}};
 constexpr Weights INITIAL_COLORS_WEIGHTS{{
-                                                 {20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20},
-                                                 {40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40},
-                                                 {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60},
-                                         }};
+    {20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f},
+    {40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f},
+    {10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10},
+}};
 constexpr Weights INITIAL_FIXING_WEIGHTS{{
-                                                 {0.1f, 0.3f, 0.6f, 0.8f, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                                                 {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-                                                 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-                                         }};
+    {0.1f / 6.f, 0.3f / 6.f, 0.6f / 6.f, 0.8f / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f},
+    {1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f},
+    {1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f},
+}};
 constexpr Weights INITIAL_INTERNAL_SYNERGY_WEIGHTS{{
-                                                           {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                                           {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                           {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                                   }};
+    {3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f},
+    {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
+    {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+}};
 constexpr Weights INITIAL_PICK_SYNERGY_WEIGHTS{{
-                                                       {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-                                                       {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4},
-                                                       {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-                                               }};
+    {3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f},
+    {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
+    {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+}};
 constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
-                                                   {4, 12, 12.3f, 12.6f, 13, 13.4f, 13.7f, 14, 15, 14.6f, 14.2f, 13.8f, 13.4f, 13, 12.6f},
-                                                   {13, 12.6f, 12.2f, 11.8f, 11.4f, 11, 10.6f, 10.2f, 9.8f, 9.4f, 9, 8.6f, 8.2f, 7.8f, 7},
-                                                   {8, 7.5f, 7, 6.5f, 6, 5.5f, 5, 4.5f, 4, 3.5f, 3, 2.5f, 2, 1.5f, 1},
-                                           }};
+    {4 / 6.f, 12 / 6.f, 12.3f / 6.f, 12.6f / 6.f, 13 / 6.f, 13.4f / 6.f, 13.7f / 6.f, 14 / 6.f, 15 / 6.f, 14.6f / 6.f, 14.2f / 6.f, 13.8f / 6.f, 13.4f / 6.f, 13 / 6.f, 12.6f / 6.f},
+    {13 / 6.f, 12.6f / 6.f, 12.2f / 6.f, 11.8f / 6.f, 11.4f / 6.f, 11 / 6.f, 10.6f / 6.f, 10.2f / 6.f, 9.8f / 6.f, 9.4f / 6.f, 9 / 6.f, 8.6f / 6.f, 8.2f / 6.f, 7.8f / 6.f, 7 / 6.f},
+    {8 / 6.f, 7.5f / 6.f, 7 / 6.f, 6.5f / 6.f, 1, 5.5f / 6.f, 5 / 6.f, 4.5f / 6.f, 4 / 6.f, 3.5f / 6.f, 3 / 6.f, 2.5f / 6.f, 2 / 6.f, 1.5f / 6.f, 1 / 6.f},
+}};
 constexpr float INITIAL_PROB_TO_INCLUDE = 0.4f;
 constexpr float INITIAL_SIMILARITY_CLIP = 0.7f;
 constexpr Lands DEFAULT_LANDS{{
-                                      {{false, false, false, false, false}, 0},
-                                      {{true, false, false, false, false}, 4},
-                                      {{false, true, false, false, false}, 4},
-                                      {{false, false, true, false, false}, 3},
-                                      {{false, false, false, true, false}, 3},
-                                      {{false, false, false, false, true}, 3},
-                                      {{true, true, false, false, false}, 0},
-                                      {{false, true, true, false, false}, 0},
-                                      {{false, false, true, true, false}, 0},
-                                      {{false, false, false, true, true}, 0},
-                                      {{true, false, false, false, true}, 0},
-                                      {{true, false, true, false, false}, 0},
-                                      {{false, true, false, true, false}, 0},
-                                      {{false, false, true, false, true}, 0},
-                                      {{true, false, false, true, false}, 0},
-                                      {{false, true, false, false, true}, 0},
-                                      {{true, true, false, false, true}, 0},
-                                      {{true, true, true, false, false}, 0},
-                                      {{false, true, true, true, false}, 0},
-                                      {{false, false, true, true, true}, 0},
-                                      {{true, false, false, true, true}, 0},
-                                      {{true, false, true, true, false}, 0},
-                                      {{false, true, false, true, true}, 0},
-                                      {{true, false, true, false, true}, 0},
-                                      {{true, true, false, true, false}, 0},
-                                      {{false, true, true, false, true}, 0},
-                                      {{false, true, true, true, true}, 0},
-                                      {{true, false, true, true, true}, 0},
-                                      {{true, true, false, true, true}, 0},
-                                      {{true, true, true, false, true}, 0},
-                                      {{true, true, true, true, false}, 0},
-                                      {{true, true, true, true, true}, 0},
-                              }};
+    {{false, false, false, false, false}, 0},
+    {{true, false, false, false, false}, 4},
+    {{false, true, false, false, false}, 4},
+    {{false, false, true, false, false}, 3},
+    {{false, false, false, true, false}, 3},
+    {{false, false, false, false, true}, 3},
+    {{true, true, false, false, false}, 0},
+    {{false, true, true, false, false}, 0},
+    {{false, false, true, true, false}, 0},
+    {{false, false, false, true, true}, 0},
+    {{true, false, false, false, true}, 0},
+    {{true, false, true, false, false}, 0},
+    {{false, true, false, true, false}, 0},
+    {{false, false, true, false, true}, 0},
+    {{true, false, false, true, false}, 0},
+    {{false, true, false, false, true}, 0},
+    {{true, true, false, false, true}, 0},
+    {{true, true, true, false, false}, 0},
+    {{false, true, true, true, false}, 0},
+    {{false, false, true, true, true}, 0},
+    {{true, false, false, true, true}, 0},
+    {{true, false, true, true, false}, 0},
+    {{false, true, false, true, true}, 0},
+    {{true, false, true, false, true}, 0},
+    {{true, true, false, true, false}, 0},
+    {{false, true, true, false, true}, 0},
+    {{false, true, true, true, true}, 0},
+    {{true, false, true, true, true}, 0},
+    {{true, true, false, true, true}, 0},
+    {{true, true, true, false, true}, 0},
+    {{true, true, true, true, false}, 0},
+    {{true, true, true, true, true}, 0},
+}};
 constexpr std::array<Colors, NUM_COMBINATIONS> COLOR_COMBINATIONS{{
-        {false, false, false, false, false},
-        {true, false, false, false, false}, // 1
-        {false, true, false, false, false},
-        {false, false, true, false, false},
-        {false, false, false, true, false},
-        {false, false, false, false, true},
-        {true, true, false, false, false}, // 6
-        {false, true, true, false, false},
-        {false, false, true, true, false},
-        {false, false, false, true, true},
-        {true, false, false, false, true},
-        {true, false, true, false, false}, // 11
-        {false, true, false, true, false},
-        {false, false, true, false, true},
-        {true, false, false, true, false},
-        {false, true, false, false, true},
-        {true, true, false, false, true}, // 16
-        {true, true, true, false, false},
-        {false, true, true, true, false},
-        {false, false, true, true, true},
-        {true, false, false, true, true},
-        {true, false, true, true, false}, // 21
-        {false, true, false, true, true},
-        {true, false, true, false, true},
-        {true, true, false, true, false},
-        {false, true, true, false, true},
-        {false, true, true, true, true}, // 26
-        {true, false, true, true, true},
-        {true, true, false, true, true},
-        {true, true, true, false, true},
-        {true, true, true, true, false},
-        {true, true, true, true, true}, // 31
+    {false, false, false, false, false},
+    {true, false, false, false, false}, // 1
+    {false, true, false, false, false},
+    {false, false, true, false, false},
+    {false, false, false, true, false},
+    {false, false, false, false, true},
+    {true, true, false, false, false}, // 6
+    {false, true, true, false, false},
+    {false, false, true, true, false},
+    {false, false, false, true, true},
+    {true, false, false, false, true},
+    {true, false, true, false, false}, // 11
+    {false, true, false, true, false},
+    {false, false, true, false, true},
+    {true, false, false, true, false},
+    {false, true, false, false, true},
+    {true, true, false, false, true}, // 16
+    {true, true, true, false, false},
+    {false, true, true, true, false},
+    {false, false, true, true, true},
+    {true, false, false, true, true},
+    {true, false, true, true, false}, // 21
+    {false, true, false, true, true},
+    {true, false, true, false, true},
+    {true, true, false, true, false},
+    {false, true, true, false, true},
+    {false, true, true, true, true}, // 26
+    {true, false, true, true, true},
+    {true, true, false, true, true},
+    {true, true, true, false, true},
+    {true, true, true, true, false},
+    {true, true, true, true, true}, // 31
 }};
 constexpr std::array<std::array<size_t, 16>, NUM_COLORS> INCLUSION_MAP{{
     {1, 6,10, 11, 14, 16, 17, 20, 21, 23, 24, 27, 28, 29, 30, 31},
@@ -200,21 +175,41 @@ Weights generate_weights(Generator& gen) {
     Weights result{};
     std::uniform_real_distribution<float> weight_dist(MIN_WEIGHT, MAX_WEIGHT);
     for (size_t i=0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) {
-            result[i][j] = weight_dist(gen);
-        }
+        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = weight_dist(gen);
+    }
+    return result;
+}
+constexpr size_t WEIGHT_PARAMETER_COUNT = PACK_SIZE * PACKS;
+template <size_t Size>
+Weights array_to_weights(const std::array<float, Size>& params, size_t start_index) {
+    Weights result;
+    for (size_t i=0; i < PACKS; i++) {
+        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = std::min(std::max(params[start_index + i * PACK_SIZE + j], MIN_WEIGHT), MAX_WEIGHT);
     }
     return result;
 }
 
+template <size_t Size>
+void write_weights_to_array(const Weights& weights, std::array<float, Size>& params, size_t start_index) {
+    for (size_t i = 0; i < PACKS; i++) {
+        for (size_t j=0; j < PACK_SIZE; j++) params[start_index + i * PACK_SIZE + j] = weights[i][j];
+    }
+}
+
 struct Variables {
+
     Weights rating_weights = INITIAL_RATING_WEIGHTS;
     Weights colors_weights = INITIAL_COLORS_WEIGHTS;
     Weights fixing_weights = INITIAL_FIXING_WEIGHTS;
     Weights internal_synergy_weights = INITIAL_INTERNAL_SYNERGY_WEIGHTS;
     Weights pick_synergy_weights = INITIAL_PICK_SYNERGY_WEIGHTS;
     Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
+#ifdef OPTIMIZE_RATINGS
     std::array<float, NUM_CARDS> ratings{1};
+    static constexpr size_t num_parameters = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS + 6;
+#else
+    static constexpr size_t num_parameters = 6 * WEIGHT_PARAMETER_COUNT + 6;
+#endif
     float prob_to_include = INITIAL_PROB_TO_INCLUDE;
     float prob_multiplier = 1 / (1 - INITIAL_PROB_TO_INCLUDE);
     float similarity_clip = INITIAL_SIMILARITY_CLIP;
@@ -225,8 +220,7 @@ struct Variables {
     float equal_cards_synergy = INITIAL_EQUAL_CARDS_SYNERGY;
 
     Variables() = default;
-    template <typename Generator>
-    explicit Variables(Generator& gen) {
+    explicit Variables(std::mt19937_64 & gen) {
         std::uniform_real_distribution<float> rating_dist{0.f, MAX_SCORE};
         std::uniform_real_distribution<float> unit_dist{0.f, 1.f};
         rating_weights = generate_weights(gen);
@@ -235,7 +229,9 @@ struct Variables {
         internal_synergy_weights = generate_weights(gen);
         pick_synergy_weights = generate_weights(gen);
         openness_weights = generate_weights(gen);
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = rating_dist(gen);
+#endif
         prob_to_include = std::min(unit_dist(gen), 0.99f);
         prob_multiplier = 1 / (1 - prob_to_include);
         similarity_clip = std::min(unit_dist(gen), 0.99f);
@@ -244,6 +240,52 @@ struct Variables {
         has_basic_types_multiplier = unit_dist(gen);
         is_regular_land_multiplier = unit_dist(gen);
         equal_cards_synergy = rating_dist(gen);
+    }
+
+    explicit Variables(const std::array<float, num_parameters>& params) {
+        rating_weights = array_to_weights(params, 0);
+        pick_synergy_weights = array_to_weights(params, WEIGHT_PARAMETER_COUNT);
+        fixing_weights = array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT);
+        internal_synergy_weights = array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT);
+        openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT);
+        colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT);
+#ifdef OPTIMIZE_RATINGS
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = std::min(std::max(params[6 * WEIGHT_PARAMETER_COUNT + i], 0.f), MAX_SCORE);
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
+#else
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
+#endif
+        prob_to_include = std::min(std::max(params[start_index] / 10.1f, 0.f), 0.99f);
+        prob_multiplier = 1 / (1 - prob_to_include);
+        similarity_clip = std::min(std::max(params[start_index + 1] / 10.1f, 0.f), 0.99f);
+        similarity_multiplier = 1 / (1 - similarity_clip);
+        is_fetch_multiplier = std::min(std::max(params[start_index + 2] / 10.f, 0.f), 1.f);
+        has_basic_types_multiplier = std::min(std::max(params[start_index + 3] / 10.f, 0.f), 1.f);
+        is_regular_land_multiplier = std::min(std::max(params[start_index + 4] / 10.f, 0.f), 1.f);
+        equal_cards_synergy = std::min(std::max(params[start_index + 5], 0.f), MAX_SCORE);
+    }
+
+    explicit operator std::array<float, num_parameters>() const {
+        std::array<float, num_parameters> result{};
+        write_weights_to_array(rating_weights, result, 0);
+        write_weights_to_array(pick_synergy_weights, result, WEIGHT_PARAMETER_COUNT);
+        write_weights_to_array(fixing_weights, result, 2 * WEIGHT_PARAMETER_COUNT);
+        write_weights_to_array(internal_synergy_weights, result, 3 * WEIGHT_PARAMETER_COUNT);
+        write_weights_to_array(openness_weights, result, 4 * WEIGHT_PARAMETER_COUNT);
+        write_weights_to_array(colors_weights, result, 5 * WEIGHT_PARAMETER_COUNT);
+#ifdef OPTIMIZE_RATINGS
+        for (size_t i=0; i < NUM_CARDS; i++) result[6 * WEIGHT_PARAMETER_COUNT + i] = ratings[i];
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
+#else
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
+#endif
+        result[start_index] = prob_to_include * 10.1f;
+        result[start_index + 1] = similarity_clip * 10.1f;
+        result[start_index + 2] = is_fetch_multiplier * 10;
+        result[start_index + 3] = has_basic_types_multiplier * 10;
+        result[start_index + 4] = is_regular_land_multiplier * 10;
+        result[start_index + 5] = equal_cards_synergy;
+        return result;
     }
 };
 
@@ -268,6 +310,9 @@ struct Constants {
     std::array<bool, NUM_CARDS> has_basic_land_types{false};
     std::array<std::array<float, NUM_CARDS>, NUM_CARDS> similarities{{0}};
     CastingProbabilityTable prob_to_cast{{{{{{0}}}}}};
+#ifndef OPTIMIZE_RATINGS
+    std::array<float, NUM_CARDS> ratings{1};
+#endif
 };
 
 void populate_constants(const std::string& file_name, Constants& constants);

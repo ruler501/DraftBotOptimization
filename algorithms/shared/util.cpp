@@ -4,6 +4,7 @@
 #include <random>
 
 #include "../../draftbot_optimization.h"
+#include "parameters.h"
 
 Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
     std::normal_distribution<float> std_dev_weights{0, WEIGHT_VOLATILITY};
@@ -26,7 +27,6 @@ Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
     std::uniform_int_distribution<size_t> int_distribution_clip(0, CLIP_INV_PROB_TO_CHANGE - 1);
     std::uniform_int_distribution<size_t> int_distribution_rating(0, RATING_INV_PROB_TO_CHANGE - 1);
     std::uniform_int_distribution<size_t> int_distribution_multiplier(0, MULTIPLIER_INV_PROB_TO_CHANGE - 1);
-    std::uniform_int_distribution<size_t> int_distribution_equal_cards(0, EQUAL_CARDS_INV_PROB_TO_CHANGE - 1);
     mutate_weights(variables.rating_weights, gen);
     mutate_weights(variables.pick_synergy_weights, gen);
     mutate_weights(variables.fixing_weights, gen);
@@ -55,15 +55,17 @@ Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {
         variables.is_regular_land_multiplier += std_dev_multiplier(gen);
         variables.is_regular_land_multiplier = std::max(std::min(variables.is_regular_land_multiplier, 1.f), 0.f);
     }
-    if (int_distribution_equal_cards(gen) == 0) {
+    if (int_distribution_rating(gen) == 0) {
         variables.equal_cards_synergy += std_dev_rating(gen);
         variables.equal_cards_synergy = std::max(std::min(variables.equal_cards_synergy, MAX_SCORE), 0.f);
     }
+#ifdef OPTIMIZE_RATINGS
     for (size_t i=0; i < NUM_CARDS; i++) {
         if(int_distribution_rating(gen) == 0) {
             variables.ratings[i] += std_dev_rating(gen);
             variables.ratings[i] = std::max(std::min(MAX_SCORE, variables.ratings[i]), 0.f);
         }
     }
+#endif
     return variables;
 }
