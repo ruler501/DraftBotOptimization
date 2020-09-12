@@ -15,7 +15,7 @@
 #include "shared/parameters.h"
 #include "shared/util.h"
 
-Weights average_crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64& gen) {
+Weights average_crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64&) {
     Weights result = weights1;
     for (size_t pack=0; pack < PACKS; pack++) {
         for (size_t pick=0; pick < PACK_SIZE; pick++) {
@@ -175,24 +175,28 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         std::cout << "Average:        ";
         output_result({total_metrics[0] / POPULATION_SIZE, total_metrics[1] / POPULATION_SIZE,
                        total_metrics[2] / POPULATION_SIZE, total_metrics[3] / POPULATION_SIZE});
-        std::cout << "Median Loss:    ";
-        std::array<double, 4> median = losses[indexed_losses[POPULATION_SIZE].first];
-        if (indexed_losses[POPULATION_SIZE].first >= POPULATION_SIZE) {
-            median = old_losses[indexed_losses[POPULATION_SIZE].first - POPULATION_SIZE];
-        }
-        if (indexed_losses[POPULATION_SIZE - 1].first >= POPULATION_SIZE) {
-            std::array<double, 4> loss = old_losses[indexed_losses[POPULATION_SIZE - 1].first - POPULATION_SIZE];
-            median = {(median[0] + loss[0]) / 2, (median[1] + loss[1]) / 2, (median[2] + loss[2]) / 2, (median[3] + loss[3]) / 2};
-        } else {
-            std::array<double, 4> loss = losses[indexed_losses[POPULATION_SIZE - 1].first];
-            median = {(median[0] + loss[0]) / 2, (median[1] + loss[1]) / 2, (median[2] + loss[2]) / 2, (median[3] + loss[3]) / 2};
-        }
-        output_result(median);
-        std::cout << "Worst Loss:     ";
-        if (indexed_losses[2 * POPULATION_SIZE - 1].first >= POPULATION_SIZE) {
-            output_result(old_losses[indexed_losses[2 * POPULATION_SIZE - 1].first - POPULATION_SIZE]);
-        } else {
-            output_result(losses[indexed_losses[2 * POPULATION_SIZE - 1].first]);
+        if (generation > 0) {
+            std::cout << "Median Loss:    ";
+            std::array<double, 4> median = losses[indexed_losses[POPULATION_SIZE].first];
+            if (indexed_losses[POPULATION_SIZE].first >= POPULATION_SIZE) {
+                median = old_losses[indexed_losses[POPULATION_SIZE].first - POPULATION_SIZE];
+            }
+            if (indexed_losses[POPULATION_SIZE - 1].first >= POPULATION_SIZE) {
+                std::array<double, 4> loss = old_losses[indexed_losses[POPULATION_SIZE - 1].first - POPULATION_SIZE];
+                median = {(median[0] + loss[0]) / 2, (median[1] + loss[1]) / 2, (median[2] + loss[2]) / 2,
+                          (median[3] + loss[3]) / 2};
+            } else {
+                std::array<double, 4> loss = losses[indexed_losses[POPULATION_SIZE - 1].first];
+                median = {(median[0] + loss[0]) / 2, (median[1] + loss[1]) / 2, (median[2] + loss[2]) / 2,
+                          (median[3] + loss[3]) / 2};
+            }
+            output_result(median);
+            std::cout << "Worst Loss:     ";
+            if (indexed_losses[2 * POPULATION_SIZE - 1].first >= POPULATION_SIZE) {
+                output_result(old_losses[indexed_losses[2 * POPULATION_SIZE - 1].first - POPULATION_SIZE]);
+            } else {
+                output_result(losses[indexed_losses[2 * POPULATION_SIZE - 1].first]);
+            }
         }
         std::vector<Variables> temp_population(POPULATION_SIZE);
         std::array<std::array<double, 4>, POPULATION_SIZE> temp_losses{std::numeric_limits<double>::max()};

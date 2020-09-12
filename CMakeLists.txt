@@ -13,7 +13,7 @@
 #########################
 
 # The minimum version of 'cmake' necessary to build this project
-cmake_minimum_required (VERSION 3.2.2)
+cmake_minimum_required (VERSION 3.17.1)
 
 # The project name and version, release numbers
 project (DraftBotOptimization LANGUAGES CXX
@@ -31,9 +31,10 @@ set(JSON_ImplicitConversions OFF CACHE INTERNAL "")
 # unintended consequences that will break the build.  It's generally
 # discouraged (although not necessarily well documented as such) to use
 # include(...) for pulling in other CMake projects anyways.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+
 add_subdirectory(extern/json)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 find_package(OpenMP)
 
@@ -53,8 +54,13 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
         target_sources(${TARGET_NAME} PRIVATE algorithms/differential_evolution.cpp)
     elseif(ALGORITHM STREQUAL "CmaEs")
         target_sources(${TARGET_NAME} PRIVATE algorithms/cma_es.cpp)
+        target_link_libraries(${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cudart.lib"
+                                                     "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cublas.lib"
+                                                     "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cusparse.lib"
+                                                     C:/opt/lib/openblas.lib C:/opt/lib/magma.lib C:/opt/lib/magma_sparse.lib)
+        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/include")
     endif()
-    target_include_directories(${TARGET_NAME} PRIVATE extern/concurrentqueue extern/eigen extern/eigenmvn)
+    target_include_directories(${TARGET_NAME} PRIVATE extern/concurrentqueue C:/opt/include)
 
     target_link_libraries(${TARGET_NAME} PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
     if(OpenMP_CXX_FOUND)
@@ -65,6 +71,8 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     endif()
 
     if (MSVC)
+        target_link_options(${TARGET_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
+        target_compile_options(${TARGET_NAME} PRIVATE /DWIN32 /D_WINDOWS -W4 -MP -DMAGMA_NOAFFINITY /FS)
     else()
         target_compile_options(${TARGET_NAME} PRIVATE -O2 -g -march=native)
         target_link_options(${TARGET_NAME} PRIVATE -O2 -g)
@@ -76,18 +84,12 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
 endforeach()
 
 if(USE_SYCL)
-    set(COMPUTECPP_USER_FLAGS "-O3 -sycl-compress-name -fsycl-split-modules=20")
     set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
     find_package(ComputeCpp)
     foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
         set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
         target_compile_definitions(${TARGET_NAME} PRIVATE USE_SYCL EIGEN_USE_SYCL=1 EIGEN_SYCL_ASYNC_EXECUTION=1  EIGEN_NO_CUDA)
-        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0/include")
-        if (ALGORITHM STREQUAL "CmaEs")
-            add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES draftbot_optimization.cpp
-                                                             algorithms/cma_es.cpp)
-        else()
-            add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES draftbot_optimization.cpp)
-        endif()
+        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/include")
+        add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES draftbot_optimization.cpp)
     endforeach()
 endif()

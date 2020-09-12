@@ -139,9 +139,12 @@ mark_as_advanced(ComputeCpp_ROOT_DIR
 if(NOT ComputeCpp_FOUND)
   return()
 endif()
-
-list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -O3 -march=native -mllvm -inline-threshold=10000 -fsycl-ih-last -Xclang
-                                             -intelspirmetadata -cl-mad-enable)
+list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -O2 -ffast-math -ffp-contract=fast -finline-functions
+                                             -funroll-loops -std=c++20 -cl-fast-relaxed-math -cl-mad-enable -cl-denorms-are-zero
+                                             -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -mllvm -inline-threshold=1000 -intelspirmetadata)
+#list(APPEND COMPUTECPP_DEVICE_COMPILER_FLAGS -O3 -ffast-math -ffp-contract=fast -finline-functions
+#                                             -funroll-loops -std=c++20 -cl-fast-relaxed-math -cl-mad-enable -cl-denorms-are-zero
+#                                             -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 mark_as_advanced(COMPUTECPP_DEVICE_COMPILER_FLAGS)
 
 if(CMAKE_CROSSCOMPILING)

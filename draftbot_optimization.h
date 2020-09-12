@@ -23,8 +23,8 @@ constexpr size_t PRECISION = 5;
 
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
-constexpr size_t POPULATION_SIZE = (size_t)((68 + 48) * FRACTION_OF_WORK_GROUPS);
-constexpr size_t KEEP_BEST = (size_t)(POPULATION_SIZE * 0.65);
+constexpr size_t POPULATION_SIZE = 32; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
+constexpr size_t KEEP_BEST = 8; //(size_t)(POPULATION_SIZE * 0.65);
 constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.25;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 5.0;

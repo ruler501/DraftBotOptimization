@@ -377,10 +377,9 @@ std::array<double, 4> get_batch_loss(const std::vector<Pick>& picks, const Varia
                  + NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT * result[2];
     return result;
 }
-
-#ifdef USE_SYCL
 class calculate_batch_loss;
 
+#ifdef USE_SYCL
 void run_simulations_on_device(const cl::sycl::device& device,
                                moodycamel::ConcurrentQueue<size_t>& concurrent_queue,
                                moodycamel::ProducerToken& producer_token,
@@ -393,7 +392,7 @@ void run_simulations_on_device(const cl::sycl::device& device,
     const size_t num_groups = sycl_queue.get_device().get_info<cl::sycl::info::device::max_compute_units>();
     const size_t work_group_size = sycl_queue.get_device().get_info<cl::sycl::info::device::max_work_group_size>();
     const auto total_threads = num_groups * work_group_size;
-    const size_t variables_to_process = (size_t)(FRACTION_OF_WORK_GROUPS * total_threads / 1024);
+    const auto variables_to_process = (size_t)(FRACTION_OF_WORK_GROUPS * total_threads / 1024);
     std::vector<Variables> iteration_variables;
     iteration_variables.reserve(variables_to_process);
     std::vector<size_t> variable_indices;
@@ -423,15 +422,16 @@ void run_simulations_on_device(const cl::sycl::device& device,
                 auto picks_ptr = picks_buffer.get_access<cl::sycl::access::mode::read>(cgh);
                 auto constants_ptr = constants_buffer.get_access<cl::sycl::access::mode::read>(cgh);
                 auto output_ptr = output_buffer.get_access<cl::sycl::access::mode::write>(cgh);
-
+                std::cout << variable_indices.size() << std::endl;
                 cgh.parallel_for<class calculate_batch_loss>(sycl::range<2>{variable_indices.size(), PICKS_PER_GENERATION},
-                                                             [=](cl::sycl::item<2> item_id) {
+                                                             [=](cl::sycl::id<2> item_id) {
                                                                  const Variables& variables = variables_ptr[item_id[0]];
                                                                  const Constants &constants = constants_ptr[0];
                                                                  const Pick &pick = picks_ptr[item_id[1]];
                                                                  //for(size_t i=item_id[1]; i < PICKS_PER_GENERATION; i += item_id.get_range()[1]) {
-                                                                     output_ptr[item_id] = calculate_loss(
+                                                                     output_ptr[item_id[0]][item_id[1]] = calculate_loss(
                                                                              pick, variables, temperature, constants);
+                                                                     output_ptr[item_id[0]][item_id[1]] = {1, true};
 //                                                                 }
                                                              });
             });
@@ -439,10 +439,11 @@ void run_simulations_on_device(const cl::sycl::device& device,
             auto output_ptr = output_buffer.get_access<cl::sycl::access::mode::read>();
             for (size_t i=0; i < variable_indices.size(); i++) {
                 for (size_t j=0; j < PICKS_PER_GENERATION; j++) {
+                    if (output_ptr[i][j].first == 0) std::cout << i << ", " << j << std::endl;
                     results[variable_indices[i]][j] = output_ptr[i][j];
                 }
             }
-                    } catch (cl::sycl::exception& error) {
+        } catch (cl::sycl::exception& error) {
             std::cerr << error.what() << std::endl;
             std::rethrow_exception(std::current_exception());
         }
@@ -492,25 +493,25 @@ std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::ve
         std::rethrow_exception(std::current_exception());
     }
 #else
-    /* std::array<std::future<std::array<double, 2>>, POPULATION_SIZE> futures; */
-    /* std::array<std::thread, POPULATION_SIZE> threads; */
-    /* for (size_t i=0; i < POPULATION_SIZE; i++) { */
-    /*     std::packaged_task<std::array<double, 2>()> task( */
-    /*             [&variables, i, &picks, temperature, &constants] { */
-    /*                 return get_batch_loss(picks, variables[i], temperature, *constants); */
-    /*             }); // wrap the function */
-    /*     futures[i] = std::move(task.get_future());  // get a future */
-    /*     std::thread t(std::move(task)); // launch on a thread */
-    /*     threads[i] = std::move(t); */
-    /* } */
-    /* for (size_t i=0; i < POPULATION_SIZE; i++) { */
-    /*     threads[i].join(); */
-    /*     futures[i].wait(); */
-    /*     results[i] = futures[i].get(); */
-    /* } */
+    std::array<std::future<std::array<double, 4>>, POPULATION_SIZE> futures;
+    std::array<std::thread, POPULATION_SIZE> threads;
     for (size_t i=0; i < POPULATION_SIZE; i++) {
-        results[i] = get_batch_loss(picks, variables[i], temperature, *constants);
+        std::packaged_task<std::array<double, 4>()> task(
+                [&variables, i, &picks, temperature, &constants] {
+                    return get_batch_loss(picks, variables[i], temperature, *constants);
+                }); // wrap the function
+        futures[i] = std::move(task.get_future());  // get a future
+        std::thread t(std::move(task)); // launch on a thread
+        threads[i] = std::move(t);
     }
+    for (size_t i=0; i < POPULATION_SIZE; i++) {
+        threads[i].join();
+        futures[i].wait();
+        results[i] = futures[i].get();
+    }
+//    for (size_t i=0; i < POPULATION_SIZE; i++) {
+//        results[i] = get_batch_loss(picks, variables[i], temperature, *constants);
+//    }
 #endif
     return results;
 }
@@ -538,9 +539,11 @@ int main(const int argc, const char* argv[]) {
     }();
     std::random_device rd;
     size_t seed = rd();
-    std::shared_ptr<const Variables> initial_variables;
+    std::shared_ptr<Variables> initial_variables;
     if (argc > 4) initial_variables = std::make_shared<Variables>(load_variables(argv[4]));
     if (argc > 3) seed = std::strtoull(argv[3], nullptr, 10);
+    initial_variables = std::make_shared<Variables>();
+    initial_variables->ratings = INITIAL_RATINGS;
     std::cout.precision(PRECISION);
     std::cout << std::fixed;
     const float temperature = std::strtof(argv[1], nullptr);
