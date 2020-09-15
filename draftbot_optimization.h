@@ -18,8 +18,8 @@ constexpr float MIN_WEIGHT = 0.f;
 constexpr float MAX_WEIGHT = 10.f;
 
 // Output Parameters
-constexpr size_t WIDTH = 8;
-constexpr size_t PRECISION = 5;
+constexpr size_t WIDTH = 14;
+constexpr size_t PRECISION = 10;
 
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
@@ -184,7 +184,7 @@ template <size_t Size>
 Weights array_to_weights(const std::array<float, Size>& params, size_t start_index) {
     Weights result;
     for (size_t i=0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = std::min(std::max(params[start_index + i * PACK_SIZE + j], MIN_WEIGHT), MAX_WEIGHT);
+        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = params[start_index + i * PACK_SIZE + j];
     }
     return result;
 }
@@ -197,7 +197,6 @@ void write_weights_to_array(const Weights& weights, std::array<float, Size>& par
 }
 
 struct Variables {
-
     Weights rating_weights = INITIAL_RATING_WEIGHTS;
     Weights colors_weights = INITIAL_COLORS_WEIGHTS;
     Weights fixing_weights = INITIAL_FIXING_WEIGHTS;
@@ -250,19 +249,19 @@ struct Variables {
         openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT);
         colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT);
 #ifdef OPTIMIZE_RATINGS
-        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = std::min(std::max(params[6 * WEIGHT_PARAMETER_COUNT + i], 0.f), MAX_SCORE);
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = params[6 * WEIGHT_PARAMETER_COUNT + i];
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
 #else
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
 #endif
-        prob_to_include = std::min(std::max(params[start_index] / 10.1f, 0.f), 0.99f);
+        prob_to_include = params[start_index] / 10.1f;
         prob_multiplier = 1 / (1 - prob_to_include);
-        similarity_clip = std::min(std::max(params[start_index + 1] / 10.1f, 0.f), 0.99f);
+        similarity_clip = params[start_index + 1] / 10.1f;
         similarity_multiplier = 1 / (1 - similarity_clip);
-        is_fetch_multiplier = std::min(std::max(params[start_index + 2] / 10.f, 0.f), 1.f);
-        has_basic_types_multiplier = std::min(std::max(params[start_index + 3] / 10.f, 0.f), 1.f);
-        is_regular_land_multiplier = std::min(std::max(params[start_index + 4] / 10.f, 0.f), 1.f);
-        equal_cards_synergy = std::min(std::max(params[start_index + 5], 0.f), MAX_SCORE);
+        is_fetch_multiplier = params[start_index + 2] / 10.f;
+        has_basic_types_multiplier = params[start_index + 3] / 10.f;
+        is_regular_land_multiplier = params[start_index + 4] / 10.f;
+        equal_cards_synergy = params[start_index + 5];
     }
 
     explicit operator std::array<float, num_parameters>() const {

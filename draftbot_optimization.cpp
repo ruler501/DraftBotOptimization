@@ -542,8 +542,6 @@ int main(const int argc, const char* argv[]) {
     std::shared_ptr<Variables> initial_variables;
     if (argc > 4) initial_variables = std::make_shared<Variables>(load_variables(argv[4]));
     if (argc > 3) seed = std::strtoull(argv[3], nullptr, 10);
-    initial_variables = std::make_shared<Variables>();
-    initial_variables->ratings = INITIAL_RATINGS;
     std::cout.precision(PRECISION);
     std::cout << std::fixed;
     const float temperature = std::strtof(argv[1], nullptr);
