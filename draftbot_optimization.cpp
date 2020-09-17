@@ -1,12 +1,10 @@
-#include <cstddef>
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "modernize-loop-convert"
 //
 // Created by Devon Richards on 8/30/2020.
 //
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <fstream>
 #include <future>
 #include <iomanip>
@@ -537,6 +535,7 @@ int main(const int argc, const char* argv[]) {
         populate_prob_to_cast("data/probTable.json", *result_ptr);
         return result_ptr;
     }();
+    std::cout << "Sizeof Constants: " << sizeof(Constants) << ", Variables: " << sizeof(Variables) << ", Pick: " << sizeof(Pick) << std::endl;
     std::random_device rd;
     size_t seed = rd();
     std::shared_ptr<Variables> initial_variables;

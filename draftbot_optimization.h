@@ -24,7 +24,7 @@ constexpr size_t PRECISION = 10;
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
 constexpr size_t POPULATION_SIZE = 32; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
-constexpr size_t KEEP_BEST = 8; //(size_t)(POPULATION_SIZE * 0.65);
+constexpr size_t KEEP_BEST = 10; //(size_t)(POPULATION_SIZE * 0.65);
 constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.25;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 5.0;
@@ -301,16 +301,16 @@ struct Pick {
 extern const std::map<std::string, Colors> FETCH_LANDS;
 
 struct Constants {
-    std::array<ColorRequirement, NUM_CARDS> color_requirements{}; // NOLINT(cert-err58-cpp)
-    std::array<unsigned char, NUM_CARDS> cmcs{0};
-    std::array<Colors, NUM_CARDS> card_colors{{false, false, false, false, false}};
-    std::array<bool, NUM_CARDS> is_land{false};
-    std::array<bool, NUM_CARDS> is_fetch{false};
-    std::array<bool, NUM_CARDS> has_basic_land_types{false};
-    std::array<std::array<float, NUM_CARDS>, NUM_CARDS> similarities{{0}};
-    CastingProbabilityTable prob_to_cast{{{{{{0}}}}}};
+    std::array<ColorRequirement, NUM_CARDS> color_requirements; // NOLINT(cert-err58-cpp)
+    std::array<unsigned char, NUM_CARDS> cmcs;
+    std::array<Colors, NUM_CARDS> card_colors;
+    std::array<bool, NUM_CARDS> is_land;
+    std::array<bool, NUM_CARDS> is_fetch;
+    std::array<bool, NUM_CARDS> has_basic_land_types;
+    std::array<std::array<float, NUM_CARDS>, NUM_CARDS> similarities;
+    CastingProbabilityTable prob_to_cast;
 #ifndef OPTIMIZE_RATINGS
-    std::array<float, NUM_CARDS> ratings{1};
+    std::array<float, NUM_CARDS> ratings;
 #endif
 };
 

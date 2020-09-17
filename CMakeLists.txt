@@ -36,16 +36,19 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 add_subdirectory(extern/json)
 find_package(Threads REQUIRED)
-find_package(OpenMP)
 
-set(OPTIMIZATION_ALGORITHMS Genetic CrossEntropy DifferentialEvolution CmaEs)
+
+set(CUDA_DIR "" CACHE PATH "Path to the root of the CUDA install.")
+
+set(OPTIMIZATION_ALGORITHMS "Genetic;CrossEntropy;DifferentialEvolution;CmaEs" CACHE STRING "The algorithms to compile")
 
 option(USE_SYCL "Use the SYCL implementation" OFF)
 option(OPTIMIZE_RATINGS "Optimize ratings as well as weights" OFF)
+option(USE_ASAN "Compile with AddressSanitizer" OFF)
 
 foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
-    add_executable(${TARGET_NAME} draftbot_optimization.cpp parse_json.cpp algorithms/shared/util.cpp)
+    add_executable(${TARGET_NAME} draftbot_optimization.cpp parse_json.cpp algorithms/shared/util.cpp draftbot_optimization.h algorithms/shared/util.h algorithms/shared/parameters.h)
     if(ALGORITHM STREQUAL "Genetic")
         target_sources(${TARGET_NAME} PRIVATE algorithms/genetic.cpp)
     elseif(ALGORITHM STREQUAL "CrossEntropy")
@@ -53,43 +56,47 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     elseif(ALGORITHM STREQUAL "DifferentialEvolution")
         target_sources(${TARGET_NAME} PRIVATE algorithms/differential_evolution.cpp)
     elseif(ALGORITHM STREQUAL "CmaEs")
-        target_sources(${TARGET_NAME} PRIVATE algorithms/cma_es.cpp)
-        target_link_libraries(${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cudart.lib"
-                                                     "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cublas.lib"
-                                                     "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/lib/x64/cusparse.lib"
-                                                     C:/opt/lib/openblas.lib C:/opt/lib/magma.lib C:/opt/lib/magma_sparse.lib)
-        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/include")
+        if (NOT CUDA_DIR)
+            message(FATAL_ERROR "You must specify CUDA_DIR when compiling CmaEs or with SYCL")
+        endif()
+        target_sources(${TARGET_NAME} PRIVATE algorithms/cma_es.cpp algorithms/shared/matrix_types.h)
+        target_link_libraries(${TARGET_NAME} PRIVATE "${CUDA_DIR}/lib/x64/cudart"
+                                                     "${CUDA_DIR}/lib/x64/cublas"
+                                                     "${CUDA_DIR}/lib/x64/cusolver"
+                )
+        target_include_directories (${TARGET_NAME} PRIVATE "${CUDA_DIR}/include")
     endif()
-    target_include_directories(${TARGET_NAME} PRIVATE extern/concurrentqueue C:/opt/include)
 
-    target_link_libraries(${TARGET_NAME} PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(${TARGET_NAME} PUBLIC OpenMP::OpenMP_CXX)
-    endif()
+      target_link_libraries(${TARGET_NAME} PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
     if(OPTIMIZE_RATINGS)
         target_compile_definitions(${TARGET_NAME} PRIVATE OPTIMIZE_RATINGS)
     endif()
-
+    set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/")
     if (MSVC)
-        target_link_options(${TARGET_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
-        target_compile_options(${TARGET_NAME} PRIVATE /DWIN32 /D_WINDOWS -W4 -MP -DMAGMA_NOAFFINITY /FS)
+        target_compile_options(${TARGET_NAME} PRIVATE -W4)
+        if (USE_ASAN)
+            target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address)
+            target_link_options(${TARGET_NAME} PRIVATE /debug -incremental:no /wholearchive:clang_rt.asan_dynamic-x86_64.lib /wholearchive:clang_rt.asan_dynamic_runtime_thunk-x86_64.lib)
+        endif()
     else()
-        target_compile_options(${TARGET_NAME} PRIVATE -O2 -g -march=native)
-        target_link_options(${TARGET_NAME} PRIVATE -O2 -g)
+        target_compile_options(${TARGET_NAME} PRIVATE -march=native)
     endif()
 
-    set_target_properties (${TARGET_NAME} PROPERTIES CXX_STANDARD 14
+    set_target_properties (${TARGET_NAME} PROPERTIES CXX_STANDARD 20
                                                      CXX_STANDARD_REQUIRED ON
                                                      CXX_EXTENSIONS OFF)
 endforeach()
 
 if(USE_SYCL)
+    if (NOT CUDA_DIR)
+        message(FATAL_ERROR "You must specify CUDA_DIR when compiling CmaEs or with SYCL")
+    endif()
     set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
     find_package(ComputeCpp)
     foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
         set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
-        target_compile_definitions(${TARGET_NAME} PRIVATE USE_SYCL EIGEN_USE_SYCL=1 EIGEN_SYCL_ASYNC_EXECUTION=1  EIGEN_NO_CUDA)
-        target_include_directories (${TARGET_NAME} PRIVATE "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1/include")
+        target_compile_definitions(${TARGET_NAME} PRIVATE USE_SYCL)
+        target_include_directories (${TARGET_NAME} PRIVATE "${CUDA_DIR}/include" extern/concurrentqueue)
         add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES draftbot_optimization.cpp)
     endforeach()
 endif()
