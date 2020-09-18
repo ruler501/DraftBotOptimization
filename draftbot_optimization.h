@@ -26,8 +26,8 @@ constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
 constexpr size_t POPULATION_SIZE = 32; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
 constexpr size_t KEEP_BEST = 10; //(size_t)(POPULATION_SIZE * 0.65);
 constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
-constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.25;
-constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 5.0;
+constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.0;
+constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 1.0;
 
 // Architectural Parameters
 constexpr size_t NUM_CARDS = 21467;
@@ -179,12 +179,25 @@ Weights generate_weights(Generator& gen) {
     }
     return result;
 }
+
+template<typename Scalar, Scalar max>
+Scalar sigmoid(const Scalar value) {
+    return max * std::exp(value / 1.25f - 4) / (1 + std::exp(value / 1.25f - 4));
+}
+
+template <typename Scalar, Scalar max>
+Scalar inverse_sigmoid(const Scalar value) {
+    if (value >= max) return static_cast<Scalar>(100);
+    else if (value <= 0) return static_cast<Scalar>(-100);
+    return (4 - std::log((max - value) / value)) * 1.25;
+}
+
 constexpr size_t WEIGHT_PARAMETER_COUNT = PACK_SIZE * PACKS;
 template <size_t Size>
 Weights array_to_weights(const std::array<float, Size>& params, size_t start_index) {
     Weights result;
     for (size_t i=0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = params[start_index + i * PACK_SIZE + j];
+        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = sigmoid<float, MAX_WEIGHT - MIN_WEIGHT>(params[start_index + i * PACK_SIZE + j]) + MIN_WEIGHT;
     }
     return result;
 }
@@ -192,7 +205,7 @@ Weights array_to_weights(const std::array<float, Size>& params, size_t start_ind
 template <size_t Size>
 void write_weights_to_array(const Weights& weights, std::array<float, Size>& params, size_t start_index) {
     for (size_t i = 0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) params[start_index + i * PACK_SIZE + j] = weights[i][j];
+        for (size_t j=0; j < PACK_SIZE; j++) params[start_index + i * PACK_SIZE + j] = inverse_sigmoid<float, MAX_WEIGHT - MIN_WEIGHT>(weights[i][j] - MIN_WEIGHT);
     }
 }
 
@@ -249,19 +262,19 @@ struct Variables {
         openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT);
         colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT);
 #ifdef OPTIMIZE_RATINGS
-        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = params[6 * WEIGHT_PARAMETER_COUNT + i];
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = sigmoid<float, MAX_SCORE>(params[6 * WEIGHT_PARAMETER_COUNT + i]);
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
 #else
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
 #endif
-        prob_to_include = params[start_index] / 10.1f;
+        prob_to_include = sigmoid<float, 0.99f>(params[start_index]);
         prob_multiplier = 1 / (1 - prob_to_include);
-        similarity_clip = params[start_index + 1] / 10.1f;
+        similarity_clip = sigmoid<float, 0.99f>(params[start_index + 1]);
         similarity_multiplier = 1 / (1 - similarity_clip);
-        is_fetch_multiplier = params[start_index + 2] / 10.f;
-        has_basic_types_multiplier = params[start_index + 3] / 10.f;
-        is_regular_land_multiplier = params[start_index + 4] / 10.f;
-        equal_cards_synergy = params[start_index + 5];
+        is_fetch_multiplier = sigmoid<float, 1.f>(params[start_index + 2]);
+        has_basic_types_multiplier = sigmoid<float, 1.f>(params[start_index + 3]);
+        is_regular_land_multiplier = sigmoid<float, 1.f>(params[start_index + 4]);
+        equal_cards_synergy = sigmoid<float, MAX_SCORE>(params[start_index + 5]);
     }
 
     explicit operator std::array<float, num_parameters>() const {
@@ -273,17 +286,17 @@ struct Variables {
         write_weights_to_array(openness_weights, result, 4 * WEIGHT_PARAMETER_COUNT);
         write_weights_to_array(colors_weights, result, 5 * WEIGHT_PARAMETER_COUNT);
 #ifdef OPTIMIZE_RATINGS
-        for (size_t i=0; i < NUM_CARDS; i++) result[6 * WEIGHT_PARAMETER_COUNT + i] = ratings[i];
+        for (size_t i=0; i < NUM_CARDS; i++) result[6 * WEIGHT_PARAMETER_COUNT + i] = inverse_sigmoid<float, MAX_SCORE>(ratings[i]);
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
 #else
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
 #endif
-        result[start_index] = prob_to_include * 10.1f;
-        result[start_index + 1] = similarity_clip * 10.1f;
-        result[start_index + 2] = is_fetch_multiplier * 10;
-        result[start_index + 3] = has_basic_types_multiplier * 10;
-        result[start_index + 4] = is_regular_land_multiplier * 10;
-        result[start_index + 5] = equal_cards_synergy;
+        result[start_index + 0] = inverse_sigmoid<float, 0.99f>(prob_to_include);
+        result[start_index + 1] = inverse_sigmoid<float, 0.99f>(similarity_clip);
+        result[start_index + 2] = inverse_sigmoid<float, 1.f>(is_fetch_multiplier);
+        result[start_index + 3] = inverse_sigmoid<float, 1.f>(has_basic_types_multiplier);
+        result[start_index + 4] = inverse_sigmoid<float, 1.f>(is_regular_land_multiplier);
+        result[start_index + 5] = inverse_sigmoid<float, MAX_SCORE>(equal_cards_synergy);
         return result;
     }
 };

@@ -540,6 +540,10 @@ int main(const int argc, const char* argv[]) {
     size_t seed = rd();
     std::shared_ptr<Variables> initial_variables;
     if (argc > 4) initial_variables = std::make_shared<Variables>(load_variables(argv[4]));
+    else {
+        initial_variables = std::make_shared<Variables>();
+        initial_variables->ratings = INITIAL_RATINGS;
+    }
     if (argc > 3) seed = std::strtoull(argv[3], nullptr, 10);
     std::cout.precision(PRECISION);
     std::cout << std::fixed;

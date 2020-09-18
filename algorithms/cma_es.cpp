@@ -69,11 +69,11 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
                                                                              + 1 / variance_selection_mass)
                                                   / (std::pow(Variables::num_parameters + 2.f, 2.f)
                                                         + ALPHA_COVARIANCE * variance_selection_mass / 2));
-    const float iso_discount_factor = 1.f / 500.f;
+    const float iso_discount_factor = (initial_variables ? 1.f/3.f : 1.f) / 500.f;
     // const float iso_discount_factor = (variance_selection_mass + 2) / (Variables::num_parameters + variance_selection_mass + 5);
     const float iso_damping_factor = 1 + 2 * std::max(0.f, std::sqrt((variance_selection_mass - 1) / (Variables::num_parameters + 1)) - 1)
                                         + iso_discount_factor;
-    const float aniso_discount_factor = 1.f / 700.f;
+    const float aniso_discount_factor = (initial_variables ? 1.f / 3.f : 1.f) / 700.f;
     // const float aniso_discount_factor = (4 + variance_selection_mass / Variables::num_parameters)
     //                                         / (Variables::num_parameters + 4 + 2 * variance_selection_mass / Variables::num_parameters);
     const float alpha_mu = 1 + rank_one_learning_rate / rank_mu_learning_rate;
@@ -120,7 +120,6 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
     HostVector<float, Variables::num_parameters> mean_cpu(cusolver_handle, cublas_handle, __LINE__);
     HostSquareMatrix<float, Variables::num_parameters> local_matrix(gpu_matrix, __LINE__);
     if (initial_variables) {
-        step_size = 1;
         params = (std::array<float, Variables::num_parameters>)*initial_variables;
         for (size_t i=0; i < Variables::num_parameters; i++) mean_cpu[i] = params[i];
     } else {
@@ -129,30 +128,21 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
     mean.copy(mean_cpu, __LINE__);
     for (size_t generation=0; generation < num_generations; generation++) {
         auto start = std::chrono::high_resolution_clock::now();
-        if (generation > 0) {
-            temp_vec_a = gpu_matrix.symmetric_eigen_decomposition(__LINE__);
-            local_vector.copy(temp_vec_a, __LINE__);
-            for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
-            save_variables(Variables(params), "eigenvalues.json");
-            for (size_t i = 0; i < Variables::num_parameters; i++) sqrt_eigenvalues[i] = std::sqrt(local_vector[i]);
-            auto finish_solver = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<float> solver_diff = finish_solver - start;
-            std::cout << "Took " << solver_diff.count() << " seconds to solve for eigenvalues and eigenvectors.\n";
-        }
+        temp_vec_a = gpu_matrix.symmetric_eigen_decomposition(__LINE__);
+        local_vector.copy(temp_vec_a, __LINE__);
+        for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
+        save_variables(Variables(params), "eigenvalues.json");
+        for (size_t i = 0; i < Variables::num_parameters; i++) sqrt_eigenvalues[i] = std::sqrt(local_vector[i]);
+        auto finish_solver = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<float> solver_diff = finish_solver - start;
+        std::cout << "Took " << solver_diff.count() << " seconds to solve for eigenvalues and eigenvectors.\n";
         for (size_t i=0; i < POPULATION_SIZE; i++) {
-            if (generation > 0) {
-                for (size_t j=0; j < Variables::num_parameters; j++) local_vector[j] = sqrt_eigenvalues[j] * unit_normal(gen);
-                temp_vec_a.copy(local_vector, __LINE__ * 100 + i);
-                changes[i] = gpu_matrix * temp_vec_a;
-                local_vector.copy(changes[i], __LINE__ * 100 + i);
-            } else {
-                for (size_t j=0; j < Variables::num_parameters; j++) local_vector[j] = unit_normal(gen);
-            }
-            for (size_t j=0; j < Variables::num_parameters; j++) {
-                local_vector[j] = std::max(std::min(local_vector[j], (MAX_SCORE - mean_cpu[j]) / step_size), -mean_cpu[j] / step_size);
-                params[j] = local_vector[j] * step_size + mean_cpu[j];
-            }
-            changes[i].copy(local_vector, __LINE__ * 100 + i);
+            for (size_t j=0; j < Variables::num_parameters; j++) local_vector[j] = sqrt_eigenvalues[j] * unit_normal(gen);
+            temp_vec_a.copy(local_vector, __LINE__ * 100 + i);
+            changes[i] = gpu_matrix * temp_vec_a;
+            mean += changes[i];
+            mean_cpu.copy(mean);
+            for (size_t i = 0; i < Variables::num_parameters; i++) params[i] = mean_cpu[i];
             population[i] = Variables(params);
         }
         for (size_t i = 0; i < PICKS_PER_GENERATION; i++) chosen_picks[i] = picks[pick_selector(gen)];
@@ -211,15 +201,11 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         change_in_mean.set(0, (size_t)__LINE__);
         for (size_t i=0; i < KEEP_BEST; i++) change_in_mean += KEEP_WEIGHTS[i] * changes[indexed_losses[i].first];
         mean += step_size * LEARNING_RATE * change_in_mean;
-        if (generation > 0) {
-            gpu_matrix.multiply_by_vector(true, 1, change_in_mean, 0, temp_vec_a, __LINE__);
-            local_vector.copy(temp_vec_a, __LINE__);
-            for (size_t i = 0; i < Variables::num_parameters; i++) local_vector[i] /= sqrt_eigenvalues[i];
-            temp_vec_a.copy(local_vector, __LINE__);
-            temp_vec_a = gpu_matrix * temp_vec_a;
-        } else {
-            temp_vec_a.copy(change_in_mean);
-        }
+        gpu_matrix.multiply_by_vector(true, 1, change_in_mean, 0, temp_vec_a, __LINE__);
+        local_vector.copy(temp_vec_a, __LINE__);
+        for (size_t i = 0; i < Variables::num_parameters; i++) local_vector[i] /= sqrt_eigenvalues[i];
+        temp_vec_a.copy(local_vector, __LINE__);
+        temp_vec_a = gpu_matrix * temp_vec_a;
         iso_evolution_path *= 1 - iso_discount_factor;
         iso_evolution_path += std::sqrt(iso_discount_factor * (2 - iso_discount_factor) * variance_selection_mass) * temp_vec_a;
         local_vector.copy(iso_evolution_path, __LINE__);
@@ -238,24 +224,16 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
         save_variables(Variables(params), "aniso_evolution_path.json");
         for (size_t i=0; i < KEEP_BEST; i++) normalized_weights[i] = KEEP_WEIGHTS[i];
-        if (generation > 0) {
-            for (size_t i=KEEP_BEST; i < POPULATION_SIZE; i++) {
-                gpu_matrix.multiply_by_vector(true, 1, changes[indexed_losses[i].first], 0, temp_vec_a, __LINE__ * 100 + i);
-                local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
-                for (size_t j = 0; j < Variables::num_parameters; j++) local_vector[j] /= sqrt_eigenvalues[j];
-                temp_vec_a.copy(local_vector, __LINE__ * 100 + i);
-                temp_vec_a = gpu_matrix * temp_vec_a;
-                local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
-                float norm_squared = local_vector.norm_squared();
-                float multiplier = Variables::num_parameters / norm_squared;
-                normalized_weights[i] = KEEP_WEIGHTS[i] * multiplier;
-            }
-        } else {
-            for (size_t i=KEEP_BEST; i < POPULATION_SIZE; i++) {
-                local_vector.copy(changes[indexed_losses[i].first], __LINE__ * 100 + i);
-                float multiplier = Variables::num_parameters / local_vector.norm_squared();
-                normalized_weights[i] = KEEP_WEIGHTS[i] * multiplier;
-            }
+        for (size_t i=KEEP_BEST; i < POPULATION_SIZE; i++) {
+            gpu_matrix.multiply_by_vector(true, 1, changes[indexed_losses[i].first], 0, temp_vec_a, __LINE__ * 100 + i);
+            local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
+            for (size_t j = 0; j < Variables::num_parameters; j++) local_vector[j] /= sqrt_eigenvalues[j];
+            temp_vec_a.copy(local_vector, __LINE__ * 100 + i);
+            temp_vec_a = gpu_matrix * temp_vec_a;
+            local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
+            float norm_squared = local_vector.norm_squared();
+            float multiplier = Variables::num_parameters / norm_squared;
+            normalized_weights[i] = KEEP_WEIGHTS[i] * multiplier;
         }
         gpu_matrix.copy(local_matrix, __LINE__);
         gpu_matrix *= covariance_factor + cs;

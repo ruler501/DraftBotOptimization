@@ -37,9 +37,6 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 add_subdirectory(extern/json)
 find_package(Threads REQUIRED)
 
-
-set(CUDA_DIR "" CACHE PATH "Path to the root of the CUDA install.")
-
 set(OPTIMIZATION_ALGORITHMS "Genetic;CrossEntropy;DifferentialEvolution;CmaEs" CACHE STRING "The algorithms to compile")
 
 option(USE_SYCL "Use the SYCL implementation" OFF)
@@ -60,10 +57,8 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
             message(FATAL_ERROR "You must specify CUDA_DIR when compiling CmaEs or with SYCL")
         endif()
         target_sources(${TARGET_NAME} PRIVATE algorithms/cma_es.cpp algorithms/shared/matrix_types.h)
-        target_link_libraries(${TARGET_NAME} PRIVATE "${CUDA_DIR}/lib/x64/cudart"
-                                                     "${CUDA_DIR}/lib/x64/cublas"
-                                                     "${CUDA_DIR}/lib/x64/cusolver"
-                )
+        find_package(CUDAToolkit)
+        target_link_libraries(${TARGET_NAME} PRIVATE CUDA::cudart CUDA::cublas CUDA::cusolver)
         target_include_directories (${TARGET_NAME} PRIVATE "${CUDA_DIR}/include")
     endif()
 
@@ -73,7 +68,7 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     endif()
     set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/")
     if (MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE -W4)
+        target_compile_options(${TARGET_NAME} PRIVATE -W4 /arch:AVX2)
         if (USE_ASAN)
             target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address)
             target_link_options(${TARGET_NAME} PRIVATE /debug -incremental:no /wholearchive:clang_rt.asan_dynamic-x86_64.lib /wholearchive:clang_rt.asan_dynamic_runtime_thunk-x86_64.lib)
