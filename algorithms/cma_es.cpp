@@ -109,29 +109,29 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
     std::array<std::pair<size_t, double>, POPULATION_SIZE> indexed_losses{};
     std::array<std::pair<size_t, double>, POPULATION_SIZE> indexed_accuracies{};
     std::array<float, Variables::num_parameters> params{};
-    std::array<float, POPULATION_SIZE> normalized_weights{};
+    std::array<float, POPULATION_SIZE> normalized_weights(KEEP_WEIGHTS);
     std::array<float, Variables::num_parameters> sqrt_eigenvalues{};
     std::array<DeviceVector<float, Variables::num_parameters>, POPULATION_SIZE> changes{};
     DeviceVector<float, Variables::num_parameters> temp_vec_a(cusolver_handle, cublas_handle, __LINE__);
     DeviceVector<float, Variables::num_parameters> change_in_mean(cusolver_handle, cublas_handle, __LINE__);
     HostVector<float, Variables::num_parameters> local_vector(cusolver_handle, cublas_handle, __LINE__);
-    HostVector<float, Variables::num_parameters> local_vector2(cusolver_handle, cublas_handle, __LINE__);
-    HostVector<float, Variables::num_parameters> local_vector3(cusolver_handle, cublas_handle, __LINE__);
-    HostVector<float, Variables::num_parameters> mean_cpu(cusolver_handle, cublas_handle, __LINE__);
     HostSquareMatrix<float, Variables::num_parameters> local_matrix(gpu_matrix, __LINE__);
     if (initial_variables) {
+        step_size /= 3;
         params = (std::array<float, Variables::num_parameters>)*initial_variables;
-        for (size_t i=0; i < Variables::num_parameters; i++) mean_cpu[i] = params[i];
+        for (size_t i=0; i < Variables::num_parameters; i++) local_vector[i] = params[i];
     } else {
-        mean_cpu.set(INITIAL_MEAN, (size_t)__LINE__);
+        local_vector.set(INITIAL_MEAN, (size_t)__LINE__);
     }
-    mean.copy(mean_cpu, __LINE__);
+    for (size_t i = 0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
+    save_variables(Variables(params), "output/initial_variables.json");
+    mean.copy(local_vector, __LINE__);
     for (size_t generation=0; generation < num_generations; generation++) {
         auto start = std::chrono::high_resolution_clock::now();
         temp_vec_a = gpu_matrix.symmetric_eigen_decomposition(__LINE__);
         local_vector.copy(temp_vec_a, __LINE__);
         for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
-        save_variables(Variables(params), "eigenvalues.json");
+        save_variables(Variables(params, false), "eigenvalues.json");
         for (size_t i = 0; i < Variables::num_parameters; i++) sqrt_eigenvalues[i] = std::sqrt(local_vector[i]);
         auto finish_solver = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float> solver_diff = finish_solver - start;
@@ -140,9 +140,10 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             for (size_t j=0; j < Variables::num_parameters; j++) local_vector[j] = sqrt_eigenvalues[j] * unit_normal(gen);
             temp_vec_a.copy(local_vector, __LINE__ * 100 + i);
             changes[i] = gpu_matrix * temp_vec_a;
-            mean += changes[i];
-            mean_cpu.copy(mean);
-            for (size_t i = 0; i < Variables::num_parameters; i++) params[i] = mean_cpu[i];
+            temp_vec_a.copy(mean);
+            temp_vec_a += changes[i];
+            local_vector.copy(temp_vec_a);
+            for (size_t j = 0; j < Variables::num_parameters; j++) params[j] = local_vector[j];
             population[i] = Variables(params);
         }
         for (size_t i = 0; i < PICKS_PER_GENERATION; i++) chosen_picks[i] = picks[pick_selector(gen)];
@@ -201,6 +202,9 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         change_in_mean.set(0, (size_t)__LINE__);
         for (size_t i=0; i < KEEP_BEST; i++) change_in_mean += KEEP_WEIGHTS[i] * changes[indexed_losses[i].first];
         mean += step_size * LEARNING_RATE * change_in_mean;
+        local_vector.copy(change_in_mean);
+        for (size_t i = 0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
+        save_variables(Variables(params, false), "output/change_in_mean.json");
         gpu_matrix.multiply_by_vector(true, 1, change_in_mean, 0, temp_vec_a, __LINE__);
         local_vector.copy(temp_vec_a, __LINE__);
         for (size_t i = 0; i < Variables::num_parameters; i++) local_vector[i] /= sqrt_eigenvalues[i];
@@ -210,7 +214,7 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         iso_evolution_path += std::sqrt(iso_discount_factor * (2 - iso_discount_factor) * variance_selection_mass) * temp_vec_a;
         local_vector.copy(iso_evolution_path, __LINE__);
         for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
-        save_variables(Variables(params), "iso_evolution_path.json");
+        save_variables(Variables(params, false), "output/iso_evolution_path.json");
         const float iso_norm = local_vector.norm();
         float cs = 0;
         aniso_evolution_path *= 1 - aniso_discount_factor;
@@ -222,8 +226,8 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
         }
         local_vector.copy(aniso_evolution_path, __LINE__);
         for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
-        save_variables(Variables(params), "aniso_evolution_path.json");
-        for (size_t i=0; i < KEEP_BEST; i++) normalized_weights[i] = KEEP_WEIGHTS[i];
+        save_variables(Variables(params, false), "output/aniso_evolution_path.json");
+        for (size_t i=0; i < KEEP_BEST; i++) normalized_weights[i] = KEEP_WEIGHTS[i] * rank_mu_learning_rate;
         for (size_t i=KEEP_BEST; i < POPULATION_SIZE; i++) {
             gpu_matrix.multiply_by_vector(true, 1, changes[indexed_losses[i].first], 0, temp_vec_a, __LINE__ * 100 + i);
             local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
@@ -233,29 +237,30 @@ Variables optimize_variables(const float temperature, const std::vector<Pick>& p
             local_vector.copy(temp_vec_a, __LINE__ * 100 + i);
             float norm_squared = local_vector.norm_squared();
             float multiplier = Variables::num_parameters / norm_squared;
-            normalized_weights[i] = KEEP_WEIGHTS[i] * multiplier;
+            normalized_weights[i] = KEEP_WEIGHTS[i] * multiplier * rank_mu_learning_rate;
         }
         gpu_matrix.copy(local_matrix, __LINE__);
-        gpu_matrix *= covariance_factor + cs;
+        if (covariance_factor + cs != 1.f) gpu_matrix *= covariance_factor + cs;
         gpu_matrix.symmetric_rank_one_update(rank_one_learning_rate, aniso_evolution_path, __LINE__);
-        for (size_t i=0; i < POPULATION_SIZE; i++) gpu_matrix.symmetric_rank_one_update(normalized_weights[i] * rank_mu_learning_rate,
+        for (size_t i=0; i < POPULATION_SIZE; i++) gpu_matrix.symmetric_rank_one_update(normalized_weights[i],
                                                                                        changes[indexed_losses[i].first], __LINE__ * 100 + i);
         local_matrix.copy(gpu_matrix, __LINE__);
         step_size *= std::exp((iso_norm / expected_unit_norm - 1) * iso_discount_factor);
         std::cout << "New step size " << step_size << ", norm_squared: " << iso_norm << std::endl;
-        mean_cpu.copy(mean, __LINE__);
+        local_vector.copy(mean, __LINE__);
         if (generation % 25 == 24) {
             std::ofstream covariance_file("output/latest_covariance.bin", std::ios::out | std::ios::binary);
             covariance_file.write(reinterpret_cast<const char *>(local_matrix.begin()), sizeof(float) * local_matrix.size());
         }
-        for (size_t i=0; i < Variables::num_parameters; i++) params[i] = mean_cpu[i];
+        for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
         save_variables(Variables(params), mean_file_name.str());
+        save_variables(Variables(params, false), "output/mean-pre-sigmoid.json");
         for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_matrix(i, i);
-        save_variables(Variables(params), std_devs_file_name.str());
+        save_variables(Variables(params, false), std_devs_file_name.str());
         const auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float> diff = end - start;
         std::cout << "Generation took " << diff.count() << " seconds" << std::endl << std::endl;
     }
-    for (size_t i=0; i < Variables::num_parameters; i++) params[i] = mean_cpu[i];
+    for (size_t i=0; i < Variables::num_parameters; i++) params[i] = local_vector[i];
     return Variables(params);
 }

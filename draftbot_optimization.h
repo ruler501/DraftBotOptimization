@@ -84,7 +84,7 @@ constexpr Weights INITIAL_INTERNAL_SYNERGY_WEIGHTS{{
 constexpr Weights INITIAL_PICK_SYNERGY_WEIGHTS{{
     {3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f},
     {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
-    {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+    {5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f},
 }};
 constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
     {4 / 6.f, 12 / 6.f, 12.3f / 6.f, 12.6f / 6.f, 13 / 6.f, 13.4f / 6.f, 13.7f / 6.f, 14 / 6.f, 15 / 6.f, 14.6f / 6.f, 14.2f / 6.f, 13.8f / 6.f, 13.4f / 6.f, 13 / 6.f, 12.6f / 6.f},
@@ -180,16 +180,19 @@ Weights generate_weights(Generator& gen) {
     return result;
 }
 
+constexpr float sigmoid_temp = MAX_SCORE / 5;
+
 template<typename Scalar, Scalar max>
 Scalar sigmoid(const Scalar value) {
-    return max * std::exp(value / 1.25f - 4) / (1 + std::exp(value / 1.25f - 4));
+    Scalar exp = std::exp(value / sigmoid_temp);
+    return max * exp / (1 + exp);
 }
 
 template <typename Scalar, Scalar max>
 Scalar inverse_sigmoid(const Scalar value) {
-    if (value >= max) return static_cast<Scalar>(100);
-    else if (value <= 0) return static_cast<Scalar>(-100);
-    return (4 - std::log((max - value) / value)) * 1.25;
+    if (value >= max) return static_cast<Scalar>(6 * sigmoid_temp);
+    else if (value <= 0) return static_cast<Scalar>(-6 * sigmoid_temp);
+    return -std::log((max - value) / value) * sigmoid_temp;
 }
 
 constexpr size_t WEIGHT_PARAMETER_COUNT = PACK_SIZE * PACKS;
@@ -198,6 +201,15 @@ Weights array_to_weights(const std::array<float, Size>& params, size_t start_ind
     Weights result;
     for (size_t i=0; i < PACKS; i++) {
         for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = sigmoid<float, MAX_WEIGHT - MIN_WEIGHT>(params[start_index + i * PACK_SIZE + j]) + MIN_WEIGHT;
+    }
+    return result;
+}
+
+template <size_t Size>
+Weights array_to_weights(const std::array<float, Size>& params, size_t start_index, bool) {
+    Weights result;
+    for (size_t i = 0; i < PACKS; i++) {
+        for (size_t j = 0; j < PACK_SIZE; j++) result[i][j] = params[start_index + i * PACK_SIZE + j];
     }
     return result;
 }
@@ -275,6 +287,29 @@ struct Variables {
         has_basic_types_multiplier = sigmoid<float, 1.f>(params[start_index + 3]);
         is_regular_land_multiplier = sigmoid<float, 1.f>(params[start_index + 4]);
         equal_cards_synergy = sigmoid<float, MAX_SCORE>(params[start_index + 5]);
+    }
+
+    explicit Variables(const std::array<float, num_parameters>& params, bool) {
+        rating_weights = array_to_weights(params, 0, false);
+        pick_synergy_weights = array_to_weights(params, WEIGHT_PARAMETER_COUNT, false);
+        fixing_weights = array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT, false);
+        internal_synergy_weights = array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT, false);
+        openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT, false);
+        colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT, false);
+#ifdef OPTIMIZE_RATINGS
+        for (size_t i = 0; i < NUM_CARDS; i++) ratings[i] = params[6 * WEIGHT_PARAMETER_COUNT + i];
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
+#else
+        constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
+#endif
+        prob_to_include = params[start_index];
+        prob_multiplier = 1 / (1 - prob_to_include);
+        similarity_clip = params[start_index + 1];
+        similarity_multiplier = 1 / (1 - similarity_clip);
+        is_fetch_multiplier = params[start_index + 2];
+        has_basic_types_multiplier = params[start_index + 3];
+        is_regular_land_multiplier = params[start_index + 4];
+        equal_cards_synergy = params[start_index + 5];
     }
 
     explicit operator std::array<float, num_parameters>() const {

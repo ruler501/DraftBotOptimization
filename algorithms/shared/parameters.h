@@ -30,7 +30,7 @@ constexpr float DIFFERENTIAL_VOLATILITY = 0.8f;
 
 // CMA-ES Hyperparameters
 constexpr float LEARNING_RATE = 1.f;
-constexpr float INITIAL_MEAN = MAX_SCORE / 2.f;
+constexpr float INITIAL_MEAN = 0;
 constexpr float INITIAL_STD_DEV = MAX_SCORE * 0.3f;
 constexpr float ALPHA_COVARIANCE = 200.f;
 #endif //DRAFTBOTOPTIMIZATION_PARAMETERS_H
