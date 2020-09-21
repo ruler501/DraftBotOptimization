@@ -97,16 +97,27 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                 }
             }
         }
-        ColorRequirement color_requirement{{{{{false}, 0}}}, (unsigned char)color_requirement_map.size()};
+        ColorRequirement color_requirement{{{{{false}, 0}}}, (unsigned char)color_requirement_map.size(), 0};
         unsigned char index = 0;
-        for (const auto& pair : color_requirement_map) {
-            if (index >= color_requirement.first.size()) {
+        for (const auto& [cost_colors, count] : color_requirement_map) {
+            if (index >= std::get<0>(color_requirement).size()) {
                 std::cerr << "Too many color requirements " << color_requirement_map.size() << " for card " << name << std::endl;
             }
             std::array<unsigned char, NUM_COMBINATIONS> valid_lands{false};
-            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(pair.first, COLOR_COMBINATIONS[j]) ? 1 : 0;
-            color_requirement.first[index] = {valid_lands, pair.second};
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(cost_colors, COLOR_COMBINATIONS[j]) ? ~(unsigned char)0 : 0;
+            std::get<0>(color_requirement)[index] = {valid_lands, count};
             index += 1;
+        }
+        if (color_requirement_map.size() == 1) {
+            std::get<2>(color_requirement) = ((constants.cmcs[i] << PROB_DIM_1_EXP) | std::get<0>(color_requirement)[0].second) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
+        } else if (color_requirement_map.size() == 2) {
+            size_t required_a = std::get<0>(color_requirement)[0].second;
+            size_t required_b = std::get<0>(color_requirement)[1].second;
+            if (required_a < required_b) {
+                std::swap(std::get<0>(color_requirement)[0], std::get<0>(color_requirement)[1]);
+                std::swap(required_a, required_b);
+            }
+            std::get<2>(color_requirement) = ((((constants.cmcs[i] << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << (PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
         }
         constants.color_requirements[i] = color_requirement;
         const auto elo_iter = card.find("elo");
@@ -158,51 +169,47 @@ void populate_constants(const std::string& file_name, Constants& constants) {
 
 void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
     std::cout << "populating prob_to_cast" << std::endl;
+    for (float& value : constants.prob_to_cast) value = 0;
     nlohmann::json data;
     std::ifstream data_file(file_name);
     data_file >> data;
     for (const auto& item : data.items()) {
         const size_t cmc = std::stoi(item.key());
-        if (constants.prob_to_cast.size() < cmc + 1) {
+        if (PROB_DIM_0 <= cmc) {
             std::cerr << "Too big index at depth 0: " << cmc << std::endl;
             continue;
         }
-        auto& inner1 = constants.prob_to_cast[cmc];
         for (const auto& item2 : item.value().items()) {
             const size_t required_a = std::stoi(item2.key());
-            if (inner1.size() < required_a + 1) {
+            if (PROB_DIM_1 <= required_a) {
                 std::cerr << "Too big index at depth 1: " << required_a << std::endl;
                 continue;
             }
-            auto& inner2 = inner1[required_a];
             for (const auto& item3 : item2.value().items()) {
                 const size_t required_b = std::stoi(item3.key());
-                if(inner2.size() < required_b + 1) {
+                if(PROB_DIM_2 <= required_b) {
                     std::cerr << "Too big index at depth 2: " << required_b << std::endl;
                     continue;
                 }
-                auto& inner3 = inner2[required_b];
                 for (const auto& item4 : item3.value().items()) {
                     const size_t land_count_a = std::stoi(item4.key());
-                    if (inner3.size() < land_count_a + 1) {
+                    if (PROB_DIM_3 <= land_count_a) {
                         std::cerr << "Too big index at depth 3: " << land_count_a << std::endl;
                         continue;
                     }
-                    auto& inner4 = inner3[land_count_a];
                     for (const auto& item5 : item4.value().items()) {
                         const size_t land_count_b = std::stoi(item5.key());
-                        if (inner4.size() < land_count_b + 1) {
+                        if (PROB_DIM_4 <= land_count_b) {
                             std::cerr << "Too big index at depth 4: " << land_count_b << std::endl;
                             continue;
                         }
-                        auto& inner5 = inner4[land_count_b];
                         for (const auto& item6 : item5.value().items()) {
                             const size_t land_count_ab = std::stoi(item6.key());
-                            if (inner5.size() < land_count_ab + 1) {
+                            if (PROB_DIM_5 <= land_count_ab) {
                                 std::cerr << "Too big index at depth 5: " << land_count_ab << std::endl;
                                 continue;
                             }
-                            inner5[land_count_ab] = item6.value().get<float>();
+                            constants.get_prob_to_cast(cmc, required_a, required_b, land_count_a, land_count_b, land_count_ab) = item6.value().get<float>();
                         }
                     }
                 }

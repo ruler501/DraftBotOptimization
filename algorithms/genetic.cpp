@@ -1,6 +1,7 @@
 //
 // Created by Devon Richards on 9/4/2020.
 //
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iomanip>

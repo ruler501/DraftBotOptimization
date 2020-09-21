@@ -4,6 +4,7 @@
 #ifndef DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H
 #define DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H
 #include <array>
+#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -23,15 +24,16 @@ constexpr size_t PRECISION = 10;
 
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
-constexpr size_t POPULATION_SIZE = 32; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
-constexpr size_t KEEP_BEST = 10; //(size_t)(POPULATION_SIZE * 0.65);
+constexpr size_t POPULATION_SIZE = 1; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
+constexpr size_t KEEP_BEST = 1; //(size_t)(POPULATION_SIZE * 0.65);
+/* constexpr size_t PICKS_PER_GENERATION = 1; */
 constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.0;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 1.0;
 
 // Architectural Parameters
 constexpr size_t NUM_CARDS = 21467;
-constexpr size_t NUM_PICK_FILES = 1508;
+constexpr size_t NUM_PICK_FILES = 16;
 constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
@@ -40,22 +42,35 @@ constexpr size_t MAX_PACK_SIZE = 20;
 constexpr size_t MAX_SEEN = 512;
 constexpr size_t MAX_PICKED = 128;
 constexpr size_t NUM_COMBINATIONS = 32;
-constexpr size_t PROB_DIM_0 = 9;
-constexpr size_t PROB_DIM_1 = 7;
-constexpr size_t PROB_DIM_2 = 4;
-constexpr size_t PROB_DIM_3 = 18;
-constexpr size_t PROB_DIM_4 = 18;
-constexpr size_t PROB_DIM_5 = 18;
+constexpr size_t PROB_DIM_0_EXP = 5;
+constexpr size_t PROB_DIM_1_EXP = 4;
+constexpr size_t PROB_DIM_2_EXP = 4;
+constexpr size_t PROB_DIM_3_EXP = 5;
+constexpr size_t PROB_DIM_4_EXP = 5;
+constexpr size_t PROB_DIM_5_EXP = 5;
+constexpr size_t PROB_DIM_0 = 1 << PROB_DIM_0_EXP;
+constexpr size_t PROB_DIM_1 = 1 << PROB_DIM_1_EXP;
+constexpr size_t PROB_DIM_2 = 1 << PROB_DIM_2_EXP;
+constexpr size_t PROB_DIM_3 = 1 << PROB_DIM_3_EXP;
+constexpr size_t PROB_DIM_4 = 1 << PROB_DIM_4_EXP;
+constexpr size_t PROB_DIM_5 = 1 << PROB_DIM_5_EXP;
+/* constexpr size_t PROB_DIM_0 = 9; */
+/* constexpr size_t PROB_DIM_1 = 7; */
+/* constexpr size_t PROB_DIM_2 = 4; */
+/* constexpr size_t PROB_DIM_3 = 18; */
+/* constexpr size_t PROB_DIM_4 = 18; */
+/* constexpr size_t PROB_DIM_5 = 18; */
 constexpr unsigned char BASIC_LAND_TYPES_REQUIRED = 2;
 constexpr unsigned char LANDS_TO_INCLUDE_COLOR = 3;
 constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
 using index_type = unsigned short;
 using Weights = std::array<std::array<float, PACK_SIZE>, PACKS>;
 using Colors = std::array<bool, NUM_COLORS>;
-using Lands = std::array<std::pair<Colors, unsigned char>, NUM_COMBINATIONS>;
-using ColorRequirement = std::pair<std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>, unsigned char>;
+using Lands = std::array<unsigned char, NUM_COMBINATIONS>;
+using ColorRequirement = std::tuple<std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>, unsigned char, size_t>;
 using Embedding = std::array<float, EMBEDDING_SIZE>;
-using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
+using CastingProbabilityTable = std::array<float, PROB_DIM_0 * PROB_DIM_1 * PROB_DIM_2 * PROB_DIM_3 * PROB_DIM_4 * PROB_DIM_5>;
+//using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
 
 constexpr float INITIAL_IS_FETCH_MULTIPLIER = 1.f;
 constexpr float INITIAL_HAS_BASIC_TYPES_MULTIPLIER = 0.75f;
@@ -93,40 +108,7 @@ constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
 }};
 constexpr float INITIAL_PROB_TO_INCLUDE = 0.4f;
 constexpr float INITIAL_SIMILARITY_CLIP = 0.7f;
-constexpr Lands DEFAULT_LANDS{{
-    {{false, false, false, false, false}, 0},
-    {{true, false, false, false, false}, 4},
-    {{false, true, false, false, false}, 4},
-    {{false, false, true, false, false}, 3},
-    {{false, false, false, true, false}, 3},
-    {{false, false, false, false, true}, 3},
-    {{true, true, false, false, false}, 0},
-    {{false, true, true, false, false}, 0},
-    {{false, false, true, true, false}, 0},
-    {{false, false, false, true, true}, 0},
-    {{true, false, false, false, true}, 0},
-    {{true, false, true, false, false}, 0},
-    {{false, true, false, true, false}, 0},
-    {{false, false, true, false, true}, 0},
-    {{true, false, false, true, false}, 0},
-    {{false, true, false, false, true}, 0},
-    {{true, true, false, false, true}, 0},
-    {{true, true, true, false, false}, 0},
-    {{false, true, true, true, false}, 0},
-    {{false, false, true, true, true}, 0},
-    {{true, false, false, true, true}, 0},
-    {{true, false, true, true, false}, 0},
-    {{false, true, false, true, true}, 0},
-    {{true, false, true, false, true}, 0},
-    {{true, true, false, true, false}, 0},
-    {{false, true, true, false, true}, 0},
-    {{false, true, true, true, true}, 0},
-    {{true, false, true, true, true}, 0},
-    {{true, true, false, true, true}, 0},
-    {{true, true, true, false, true}, 0},
-    {{true, true, true, true, false}, 0},
-    {{true, true, true, true, true}, 0},
-}};
+constexpr Lands DEFAULT_LANDS{{0, 4, 4, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 constexpr std::array<Colors, NUM_COMBINATIONS> COLOR_COMBINATIONS{{
     {false, false, false, false, false},
     {true, false, false, false, false}, // 1
@@ -182,17 +164,17 @@ Weights generate_weights(Generator& gen) {
 
 constexpr float sigmoid_temp = MAX_SCORE / 5;
 
-template<typename Scalar, Scalar max>
-Scalar sigmoid(const Scalar value) {
+template<typename Scalar>
+Scalar sigmoid(const Scalar value, const Scalar max, const Scalar min=0) {
     Scalar exp = std::exp(value / sigmoid_temp);
-    return max * exp / (1 + exp);
+    return (max - min) * exp / (1 + exp) + min;
 }
 
-template <typename Scalar, Scalar max>
-Scalar inverse_sigmoid(const Scalar value) {
-    if (value >= max) return static_cast<Scalar>(6 * sigmoid_temp);
-    else if (value <= 0) return static_cast<Scalar>(-6 * sigmoid_temp);
-    return -std::log((max - value) / value) * sigmoid_temp;
+template <typename Scalar>
+Scalar inverse_sigmoid(const Scalar value, const Scalar max, const Scalar min=0) {
+    if (value - min >= max) return static_cast<Scalar>(6 * sigmoid_temp);
+    else if (value - min <= 0) return static_cast<Scalar>(-6 * sigmoid_temp);
+    return -std::log((max - value) / (value - min)) * sigmoid_temp;
 }
 
 constexpr size_t WEIGHT_PARAMETER_COUNT = PACK_SIZE * PACKS;
@@ -200,7 +182,7 @@ template <size_t Size>
 Weights array_to_weights(const std::array<float, Size>& params, size_t start_index) {
     Weights result;
     for (size_t i=0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = sigmoid<float, MAX_WEIGHT - MIN_WEIGHT>(params[start_index + i * PACK_SIZE + j]) + MIN_WEIGHT;
+        for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = sigmoid(params[start_index + i * PACK_SIZE + j], MAX_WEIGHT, MIN_WEIGHT);
     }
     return result;
 }
@@ -217,7 +199,7 @@ Weights array_to_weights(const std::array<float, Size>& params, size_t start_ind
 template <size_t Size>
 void write_weights_to_array(const Weights& weights, std::array<float, Size>& params, size_t start_index) {
     for (size_t i = 0; i < PACKS; i++) {
-        for (size_t j=0; j < PACK_SIZE; j++) params[start_index + i * PACK_SIZE + j] = inverse_sigmoid<float, MAX_WEIGHT - MIN_WEIGHT>(weights[i][j] - MIN_WEIGHT);
+        for (size_t j=0; j < PACK_SIZE; j++) params[start_index + i * PACK_SIZE + j] = inverse_sigmoid(weights[i][j], MAX_WEIGHT, MIN_WEIGHT);
     }
 }
 
@@ -274,19 +256,19 @@ struct Variables {
         openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT);
         colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT);
 #ifdef OPTIMIZE_RATINGS
-        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = sigmoid<float, MAX_SCORE>(params[6 * WEIGHT_PARAMETER_COUNT + i]);
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = sigmoid(params[6 * WEIGHT_PARAMETER_COUNT + i], MAX_SCORE);
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
 #else
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
 #endif
-        prob_to_include = sigmoid<float, 0.99f>(params[start_index]);
+        prob_to_include = sigmoid(params[start_index], 0.99f);
         prob_multiplier = 1 / (1 - prob_to_include);
-        similarity_clip = sigmoid<float, 0.99f>(params[start_index + 1]);
+        similarity_clip = sigmoid(params[start_index + 1], 0.99f);
         similarity_multiplier = 1 / (1 - similarity_clip);
-        is_fetch_multiplier = sigmoid<float, 1.f>(params[start_index + 2]);
-        has_basic_types_multiplier = sigmoid<float, 1.f>(params[start_index + 3]);
-        is_regular_land_multiplier = sigmoid<float, 1.f>(params[start_index + 4]);
-        equal_cards_synergy = sigmoid<float, MAX_SCORE>(params[start_index + 5]);
+        is_fetch_multiplier = sigmoid(params[start_index + 2], 1.f);
+        has_basic_types_multiplier = sigmoid(params[start_index + 3], 1.f);
+        is_regular_land_multiplier = sigmoid(params[start_index + 4], 1.f);
+        equal_cards_synergy = sigmoid(params[start_index + 5], MAX_SCORE);
     }
 
     explicit Variables(const std::array<float, num_parameters>& params, bool) {
@@ -321,17 +303,17 @@ struct Variables {
         write_weights_to_array(openness_weights, result, 4 * WEIGHT_PARAMETER_COUNT);
         write_weights_to_array(colors_weights, result, 5 * WEIGHT_PARAMETER_COUNT);
 #ifdef OPTIMIZE_RATINGS
-        for (size_t i=0; i < NUM_CARDS; i++) result[6 * WEIGHT_PARAMETER_COUNT + i] = inverse_sigmoid<float, MAX_SCORE>(ratings[i]);
+        for (size_t i=0; i < NUM_CARDS; i++) result[6 * WEIGHT_PARAMETER_COUNT + i] = inverse_sigmoid(ratings[i], MAX_SCORE);
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
 #else
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT;
 #endif
-        result[start_index + 0] = inverse_sigmoid<float, 0.99f>(prob_to_include);
-        result[start_index + 1] = inverse_sigmoid<float, 0.99f>(similarity_clip);
-        result[start_index + 2] = inverse_sigmoid<float, 1.f>(is_fetch_multiplier);
-        result[start_index + 3] = inverse_sigmoid<float, 1.f>(has_basic_types_multiplier);
-        result[start_index + 4] = inverse_sigmoid<float, 1.f>(is_regular_land_multiplier);
-        result[start_index + 5] = inverse_sigmoid<float, MAX_SCORE>(equal_cards_synergy);
+        result[start_index + 0] = inverse_sigmoid(prob_to_include, 0.99f);
+        result[start_index + 1] = inverse_sigmoid(similarity_clip, 0.99f);
+        result[start_index + 2] = inverse_sigmoid(is_fetch_multiplier, 1.f);
+        result[start_index + 3] = inverse_sigmoid(has_basic_types_multiplier, 1.f);
+        result[start_index + 4] = inverse_sigmoid(is_regular_land_multiplier, 1.f);
+        result[start_index + 5] = inverse_sigmoid(equal_cards_synergy, MAX_SCORE);
         return result;
     }
 };
@@ -360,6 +342,37 @@ struct Constants {
 #ifndef OPTIMIZE_RATINGS
     std::array<float, NUM_CARDS> ratings;
 #endif
+
+    constexpr float& get_prob_to_cast(size_t cmc, size_t required_a, size_t land_count_a) noexcept {
+        return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
+        //return prob_to_cast[cmc][required_a][0][0][0][land_count_a];
+    }
+
+    constexpr float& get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t land_count_a,
+                                      size_t land_count_b, size_t land_count_ab) noexcept {
+        return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
+    }
+
+    constexpr float get_prob_to_cast(size_t cmc, size_t required_a, size_t land_count_a) const noexcept {
+        return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
+        //return prob_to_cast[cmc][required_a][0][0][0][land_count_a];
+    }
+
+    constexpr float get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t land_count_a,
+                                     size_t land_count_b, size_t land_count_ab) const noexcept {
+        return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
+    }
+
+    constexpr float get_prob_to_cast(size_t offset, size_t land_count_a) const noexcept {
+        return prob_to_cast[offset | land_count_a];
+    }
+
+    constexpr float get_prob_to_cast(size_t offset, size_t land_count_a, size_t land_count_b, size_t land_count_ab) const noexcept {
+        return prob_to_cast[offset | (((land_count_ab << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
+    }
 };
 
 void populate_constants(const std::string& file_name, Constants& constants);
@@ -375,4 +388,4 @@ Variables optimize_variables(float temperature, const std::vector<Pick>& picks, 
 std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
                                                                    const std::vector<Pick>& picks, float temperature,
                                                                    const std::shared_ptr<const Constants>& constants);
-#endif //DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H
+#endif //DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H//
