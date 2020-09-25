@@ -24,10 +24,10 @@ constexpr size_t PRECISION = 10;
 
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
-constexpr size_t POPULATION_SIZE = 1; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
-constexpr size_t KEEP_BEST = 1; //(size_t)(POPULATION_SIZE * 0.65);
+constexpr size_t POPULATION_SIZE = 34; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
+constexpr size_t KEEP_BEST = 12; //(size_t)(POPULATION_SIZE * 0.65);
 /* constexpr size_t PICKS_PER_GENERATION = 1; */
-constexpr size_t PICKS_PER_GENERATION = 30 * 1024;
+constexpr size_t PICKS_PER_GENERATION = 32 * 1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.0;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 1.0;
 
@@ -44,7 +44,7 @@ constexpr size_t MAX_PICKED = 128;
 constexpr size_t NUM_COMBINATIONS = 32;
 constexpr size_t PROB_DIM_0_EXP = 5;
 constexpr size_t PROB_DIM_1_EXP = 4;
-constexpr size_t PROB_DIM_2_EXP = 4;
+constexpr size_t PROB_DIM_2_EXP = 2;
 constexpr size_t PROB_DIM_3_EXP = 5;
 constexpr size_t PROB_DIM_4_EXP = 5;
 constexpr size_t PROB_DIM_5_EXP = 5;
@@ -64,52 +64,54 @@ constexpr unsigned char BASIC_LAND_TYPES_REQUIRED = 2;
 constexpr unsigned char LANDS_TO_INCLUDE_COLOR = 3;
 constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
 using index_type = unsigned short;
-using Weights = std::array<std::array<float, PACK_SIZE>, PACKS>;
-using Colors = std::array<bool, NUM_COLORS>;
-using Lands = std::array<unsigned char, NUM_COMBINATIONS>;
-using ColorRequirement = std::tuple<std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>, unsigned char, size_t>;
+using Weights = float[PACKS][PACK_SIZE];
+using Lands = unsigned char[NUM_COMBINATIONS];
+struct ColorRequirement {
+    std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> requirements[5];
+    unsigned char requirements_count;
+    size_t offset;
+};
 using Embedding = std::array<float, EMBEDDING_SIZE>;
-using CastingProbabilityTable = std::array<float, PROB_DIM_0 * PROB_DIM_1 * PROB_DIM_2 * PROB_DIM_3 * PROB_DIM_4 * PROB_DIM_5>;
 //using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
 
 constexpr float INITIAL_IS_FETCH_MULTIPLIER = 1.f;
 constexpr float INITIAL_HAS_BASIC_TYPES_MULTIPLIER = 0.75f;
 constexpr float INITIAL_IS_REGULAR_LAND_MULTIPLIER = 0.5f;
 constexpr float INITIAL_EQUAL_CARDS_SYNERGY = 2.5f;
-constexpr Weights INITIAL_RATING_WEIGHTS{{
+constexpr Weights INITIAL_RATING_WEIGHTS{
     {5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f},
     {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
     {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-}};
-constexpr Weights INITIAL_COLORS_WEIGHTS{{
+};
+constexpr Weights INITIAL_COLORS_WEIGHTS{
     {20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f, 20 / 6.f},
     {40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f, 40 / 6.f},
     {10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10},
-}};
-constexpr Weights INITIAL_FIXING_WEIGHTS{{
+};
+constexpr Weights INITIAL_FIXING_WEIGHTS{
     {0.1f / 6.f, 0.3f / 6.f, 0.6f / 6.f, 0.8f / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f},
     {1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f, 1.5f / 6.f},
     {1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f, 1 / 6.f},
-}};
-constexpr Weights INITIAL_INTERNAL_SYNERGY_WEIGHTS{{
+};
+constexpr Weights INITIAL_INTERNAL_SYNERGY_WEIGHTS{
     {3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f},
     {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
     {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
-}};
-constexpr Weights INITIAL_PICK_SYNERGY_WEIGHTS{{
+};
+constexpr Weights INITIAL_PICK_SYNERGY_WEIGHTS{
     {3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f, 3 / 6.f},
     {4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f, 4 / 6.f},
     {5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f, 5 / 6.f},
-}};
-constexpr Weights INITIAL_OPENNESS_WEIGHTS{{
+};
+constexpr Weights INITIAL_OPENNESS_WEIGHTS{
     {4 / 6.f, 12 / 6.f, 12.3f / 6.f, 12.6f / 6.f, 13 / 6.f, 13.4f / 6.f, 13.7f / 6.f, 14 / 6.f, 15 / 6.f, 14.6f / 6.f, 14.2f / 6.f, 13.8f / 6.f, 13.4f / 6.f, 13 / 6.f, 12.6f / 6.f},
     {13 / 6.f, 12.6f / 6.f, 12.2f / 6.f, 11.8f / 6.f, 11.4f / 6.f, 11 / 6.f, 10.6f / 6.f, 10.2f / 6.f, 9.8f / 6.f, 9.4f / 6.f, 9 / 6.f, 8.6f / 6.f, 8.2f / 6.f, 7.8f / 6.f, 7 / 6.f},
     {8 / 6.f, 7.5f / 6.f, 7 / 6.f, 6.5f / 6.f, 1, 5.5f / 6.f, 5 / 6.f, 4.5f / 6.f, 4 / 6.f, 3.5f / 6.f, 3 / 6.f, 2.5f / 6.f, 2 / 6.f, 1.5f / 6.f, 1 / 6.f},
-}};
+};
 constexpr float INITIAL_PROB_TO_INCLUDE = 0.4f;
 constexpr float INITIAL_SIMILARITY_CLIP = 0.7f;
-constexpr Lands DEFAULT_LANDS{{0, 4, 4, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-constexpr std::array<Colors, NUM_COMBINATIONS> COLOR_COMBINATIONS{{
+constexpr Lands DEFAULT_LANDS{0, 4, 4, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+constexpr std::array<std::array<bool, NUM_COLORS>, NUM_COMBINATIONS> COLOR_COMBINATIONS{{
     {false, false, false, false, false},
     {true, false, false, false, false}, // 1
     {false, true, false, false, false},
@@ -153,13 +155,11 @@ constexpr std::array<std::array<size_t, 16>, NUM_COLORS> INCLUSION_MAP{{
 extern std::array<float, NUM_CARDS> INITIAL_RATINGS;
 
 template <typename Generator>
-Weights generate_weights(Generator& gen) {
-    Weights result{};
+void generate_weights(Generator& gen, Weights& result) {
     std::uniform_real_distribution<float> weight_dist(MIN_WEIGHT, MAX_WEIGHT);
     for (size_t i=0; i < PACKS; i++) {
         for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = weight_dist(gen);
     }
-    return result;
 }
 
 constexpr float sigmoid_temp = MAX_SCORE / 5;
@@ -179,21 +179,17 @@ Scalar inverse_sigmoid(const Scalar value, const Scalar max, const Scalar min=0)
 
 constexpr size_t WEIGHT_PARAMETER_COUNT = PACK_SIZE * PACKS;
 template <size_t Size>
-Weights array_to_weights(const std::array<float, Size>& params, size_t start_index) {
-    Weights result;
+void array_to_weights(const std::array<float, Size>& params, size_t start_index, Weights& result) {
     for (size_t i=0; i < PACKS; i++) {
         for (size_t j=0; j < PACK_SIZE; j++) result[i][j] = sigmoid(params[start_index + i * PACK_SIZE + j], MAX_WEIGHT, MIN_WEIGHT);
     }
-    return result;
 }
 
 template <size_t Size>
-Weights array_to_weights(const std::array<float, Size>& params, size_t start_index, bool) {
-    Weights result;
+void array_to_weights(const std::array<float, Size>& params, size_t start_index, Weights& result, bool) {
     for (size_t i = 0; i < PACKS; i++) {
         for (size_t j = 0; j < PACK_SIZE; j++) result[i][j] = params[start_index + i * PACK_SIZE + j];
     }
-    return result;
 }
 
 template <size_t Size>
@@ -204,14 +200,14 @@ void write_weights_to_array(const Weights& weights, std::array<float, Size>& par
 }
 
 struct Variables {
-    Weights rating_weights = INITIAL_RATING_WEIGHTS;
-    Weights colors_weights = INITIAL_COLORS_WEIGHTS;
-    Weights fixing_weights = INITIAL_FIXING_WEIGHTS;
-    Weights internal_synergy_weights = INITIAL_INTERNAL_SYNERGY_WEIGHTS;
-    Weights pick_synergy_weights = INITIAL_PICK_SYNERGY_WEIGHTS;
-    Weights openness_weights = INITIAL_OPENNESS_WEIGHTS;
+    Weights rating_weights;
+    Weights colors_weights;
+    Weights fixing_weights;
+    Weights internal_synergy_weights;
+    Weights pick_synergy_weights;
+    Weights openness_weights;
 #ifdef OPTIMIZE_RATINGS
-    std::array<float, NUM_CARDS> ratings{1};
+    float ratings[NUM_CARDS]{1};
     static constexpr size_t num_parameters = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS + 6;
 #else
     static constexpr size_t num_parameters = 6 * WEIGHT_PARAMETER_COUNT + 6;
@@ -225,16 +221,25 @@ struct Variables {
     float is_regular_land_multiplier = INITIAL_IS_REGULAR_LAND_MULTIPLIER;
     float equal_cards_synergy = INITIAL_EQUAL_CARDS_SYNERGY;
 
-    Variables() = default;
+    Variables() {
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) rating_weights[i][j] = INITIAL_RATING_WEIGHTS[i][j];
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) pick_synergy_weights[i][j] = INITIAL_PICK_SYNERGY_WEIGHTS[i][j];
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) fixing_weights[i][j] = INITIAL_FIXING_WEIGHTS[i][j];
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) internal_synergy_weights[i][j] = INITIAL_INTERNAL_SYNERGY_WEIGHTS[i][j];
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) openness_weights[i][j] = INITIAL_OPENNESS_WEIGHTS[i][j];
+        for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) colors_weights[i][j] = INITIAL_COLORS_WEIGHTS[i][j];
+        for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = INITIAL_RATINGS[i];
+    }
+
     explicit Variables(std::mt19937_64 & gen) {
         std::uniform_real_distribution<float> rating_dist{0.f, MAX_SCORE};
         std::uniform_real_distribution<float> unit_dist{0.f, 1.f};
-        rating_weights = generate_weights(gen);
-        colors_weights = generate_weights(gen);
-        fixing_weights = generate_weights(gen);
-        internal_synergy_weights = generate_weights(gen);
-        pick_synergy_weights = generate_weights(gen);
-        openness_weights = generate_weights(gen);
+        generate_weights(gen, rating_weights);
+        generate_weights(gen, pick_synergy_weights);
+        generate_weights(gen, fixing_weights);
+        generate_weights(gen, internal_synergy_weights);
+        generate_weights(gen, openness_weights);
+        generate_weights(gen, colors_weights);
 #ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = rating_dist(gen);
 #endif
@@ -249,12 +254,12 @@ struct Variables {
     }
 
     explicit Variables(const std::array<float, num_parameters>& params) {
-        rating_weights = array_to_weights(params, 0);
-        pick_synergy_weights = array_to_weights(params, WEIGHT_PARAMETER_COUNT);
-        fixing_weights = array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT);
-        internal_synergy_weights = array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT);
-        openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT);
-        colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT);
+        array_to_weights(params, 0, rating_weights);
+        array_to_weights(params, WEIGHT_PARAMETER_COUNT, pick_synergy_weights);
+        array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT, fixing_weights);
+        array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT, internal_synergy_weights);
+        array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT, openness_weights);
+        array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT, colors_weights);
 #ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = sigmoid(params[6 * WEIGHT_PARAMETER_COUNT + i], MAX_SCORE);
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
@@ -272,12 +277,12 @@ struct Variables {
     }
 
     explicit Variables(const std::array<float, num_parameters>& params, bool) {
-        rating_weights = array_to_weights(params, 0, false);
-        pick_synergy_weights = array_to_weights(params, WEIGHT_PARAMETER_COUNT, false);
-        fixing_weights = array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT, false);
-        internal_synergy_weights = array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT, false);
-        openness_weights = array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT, false);
-        colors_weights = array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT, false);
+        array_to_weights(params, 0, rating_weights, false);
+        array_to_weights(params, WEIGHT_PARAMETER_COUNT, pick_synergy_weights, false);
+        array_to_weights(params, 2 * WEIGHT_PARAMETER_COUNT, fixing_weights, false);
+        array_to_weights(params, 3 * WEIGHT_PARAMETER_COUNT, internal_synergy_weights, false);
+        array_to_weights(params, 4 * WEIGHT_PARAMETER_COUNT, openness_weights, false);
+        array_to_weights(params, 5 * WEIGHT_PARAMETER_COUNT, colors_weights, false);
 #ifdef OPTIMIZE_RATINGS
         for (size_t i = 0; i < NUM_CARDS; i++) ratings[i] = params[6 * WEIGHT_PARAMETER_COUNT + i];
         constexpr size_t start_index = 6 * WEIGHT_PARAMETER_COUNT + NUM_CARDS;
@@ -295,7 +300,7 @@ struct Variables {
     }
 
     explicit operator std::array<float, num_parameters>() const {
-        std::array<float, num_parameters> result{};
+        std::array<float, num_parameters> result;
         write_weights_to_array(rating_weights, result, 0);
         write_weights_to_array(pick_synergy_weights, result, WEIGHT_PARAMETER_COUNT);
         write_weights_to_array(fixing_weights, result, 2 * WEIGHT_PARAMETER_COUNT);
@@ -319,28 +324,28 @@ struct Variables {
 };
 
 struct Pick {
-    std::array<index_type, MAX_PACK_SIZE> in_pack{std::numeric_limits<index_type>::max()};
-    std::array<index_type, MAX_SEEN> seen{std::numeric_limits<index_type>::max()};
-    std::array<index_type, MAX_PICKED> picked{std::numeric_limits<index_type>::max()};
+    index_type in_pack[MAX_PACK_SIZE]{std::numeric_limits<index_type>::max()};
+    index_type seen[MAX_SEEN]{std::numeric_limits<index_type>::max()};
+    index_type picked[MAX_PICKED]{std::numeric_limits<index_type>::max()};
     unsigned char pack_num{0};
     unsigned char pick_num{0};
     unsigned char pack_size{0};
     unsigned char packs{0};
     index_type chosen_card{0};
 };
-extern const std::map<std::string, Colors> FETCH_LANDS;
+extern const std::map<std::string, std::array<bool, 5>> FETCH_LANDS;
 
 struct Constants {
-    std::array<ColorRequirement, NUM_CARDS> color_requirements; // NOLINT(cert-err58-cpp)
-    std::array<unsigned char, NUM_CARDS> cmcs;
-    std::array<Colors, NUM_CARDS> card_colors;
-    std::array<bool, NUM_CARDS> is_land;
-    std::array<bool, NUM_CARDS> is_fetch;
-    std::array<bool, NUM_CARDS> has_basic_land_types;
-    std::array<std::array<float, NUM_CARDS>, NUM_CARDS> similarities;
-    CastingProbabilityTable prob_to_cast;
+    ColorRequirement color_requirements[NUM_CARDS]; // NOLINT(cert-err58-cpp)
+    unsigned char cmcs[NUM_CARDS];
+    bool card_colors[NUM_CARDS][5];
+    bool is_land[NUM_CARDS];
+    bool is_fetch[NUM_CARDS];
+    bool has_basic_land_types[NUM_CARDS];
+    float similarities[NUM_CARDS][NUM_CARDS];
+    float prob_to_cast[PROB_DIM_0 * PROB_DIM_1 * PROB_DIM_2 * PROB_DIM_3 * PROB_DIM_4 * PROB_DIM_5];
 #ifndef OPTIMIZE_RATINGS
-    std::array<float, NUM_CARDS> ratings;
+    float ratings[NUM_CARDS];
 #endif
 
     constexpr float& get_prob_to_cast(size_t cmc, size_t required_a, size_t land_count_a) noexcept {
@@ -388,4 +393,9 @@ Variables optimize_variables(float temperature, const std::vector<Pick>& picks, 
 std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::vector<Variables>& variables,
                                                                    const std::vector<Pick>& picks, float temperature,
                                                                    const std::shared_ptr<const Constants>& constants);
+#ifdef USE_CUDA
+std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations_cuda(const std::vector<Variables>& variables,
+                                                                        const std::vector<Pick>& picks, const float temperature,
+                                                                        const std::shared_ptr<const Constants>& constants);
+#endif
 #endif //DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H//

@@ -32,23 +32,10 @@
 #endif
 
 #include "draftbot_optimization.h"
-
+#ifndef USE_CUDA
 #ifdef __AVX2__
 #include <immintrin.h>
-/* unsigned char hsum_8x32(__m256i v) { */
-/*     __m128i sum128 = _mm_adds_epu8( */ 
-/*                  _mm256_castsi256_si128(v), */
-/*                  _mm256_extracti128_si256(v, 1)); // silly GCC uses a longer AXV512VL instruction if AVX512 is enabled :/ */
-/*     __m128i hi64  = _mm_unpackhi_epi64(sum128, sum128);           // 3-operand non-destructive AVX lets us save a byte without needing a movdqa */
-/*     __m128i sum64 = _mm_adds_epu8(hi64, sum128); // low 64 is (15 + 7), (14 + 6), (13 + 5), (12 + 4), (11 + 3), (10 + 2), (9 + 1), (8 + 0) */
-/*     __m128i hi32  = _mm_shuffle_epi8(sum64, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 3, 2, 1, 0, 7, 6, 5, 4)); */
-/*     __m128i sum32 = _mm_adds_epu8(sum64, hi32); // low 32 is (15 + 7 + 11 + 3), (14 + 6 + 10 + 2), (13 + 5 + 9 + 1), (12 + 4 + 8 + 0) */
-/*     __m128i hi16  = _mm_shuffle_epi8(sum32, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 1, 0, 3, 2)); */
-/*     __m128i sum16 = _mm_adds_epu8(sum32, hi16); // low 16 is (15 + 7 + 11 + 3 + 13 + 5 + 9 + 1), (14 + 6 + 10 + 2 + 12 + 4 + 8 + 0) */
-/*     __m128i hi8   = _mm_shuffle_epi8(sum16, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 0, 1)); */
-/*     __m128i sum8  = _mm_adds_epu8(sum16, hi8); */
-/*     return _mm_extract_epi8(sum8, 0);       // movd */
-/* } */
+
 #ifdef CONSIDER_NON_BASICS
 unsigned char hsum_8x32(__m256i v) {
     __m256i sum64 = _mm256_sad_epu8(v, _mm256_set_epi32(0, 0, 0, 0, 0, 0, 0, 0));
@@ -64,27 +51,16 @@ unsigned char hsum_8x32(__m256i v) {
     return _mm256_extract_epi16(sum64, 0);
 }
 #endif
-/* unsigned char hsum_8x32(__m256i v) { */
-/*     /1* __m128i hi128 = _mm256_extracti128_si256(v, 1); *1/ */
-/*     /1* __m128i hi64 = _mm_unpackhi_epi64(hi128, hi128); *1/ */
-/*     __m128i lo128 = _mm256_castsi256_si128(v); */
-/*     __m128i hi32  = _mm_shuffle_epi8(lo128, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 3, 2, 1, 0, 7, 6, 5, 4)); */
-/*     __m128i sum32 = _mm_adds_epu8(lo128, hi32); // low 32 is (15 + 7 + 11 + 3), (14 + 6 + 10 + 2), (13 + 5 + 9 + 1), (12 + 4 + 8 + 0) */
-/*     __m128i hi16  = _mm_shuffle_epi8(sum32, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 1, 0, 3, 2)); */
-/*     __m128i sum16 = _mm_adds_epu8(sum32, hi16); // low 16 is (15 + 7 + 11 + 3 + 13 + 5 + 9 + 1), (14 + 6 + 10 + 2 + 12 + 4 + 8 + 0) */
-/*     __m128i hi8   = _mm_shuffle_epi8(sum16, _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 0, 1)); */
-/*     __m128i sum8  = _mm_adds_epu8(sum16, hi8); */
-/*     return _mm_extract_epi8(sum8, 0); */
-/* } */
 
-unsigned char sum_with_mask(const std::array<unsigned char, 32>& counts, const std::array<unsigned char, 32>& masks) {
-    return hsum_8x32(_mm256_and_si256(_mm256_loadu_si256((const __m256i *)counts.data()), _mm256_loadu_si256((const __m256i *)masks.data())));
+unsigned char sum_with_mask(const unsigned char (&counts)[32], const unsigned char (&masks)[32]) {
+    return hsum_8x32(_mm256_and_si256(_mm256_loadu_si256((const __m256i *)counts), _mm256_loadu_si256((const __m256i *)masks)));
 }
 
-std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const std::array<unsigned char, 32>& counts, const std::array<unsigned char, 32>& masks_a, const std::array<unsigned char, 32>& masks_b) {
-    __m256i loaded = _mm256_loadu_si256((const __m256i *)counts.data());
-    __m256i loaded_mask_a = _mm256_loadu_si256((const __m256i *)masks_a.data());
-    __m256i loaded_mask_b = _mm256_loadu_si256((const __m256i *)masks_b.data());
+std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const unsigned char (&counts)[32], const unsigned char (&masks_a)[32],
+                                                                        const unsigned char (&masks_b)[32]) {
+    __m256i loaded = _mm256_loadu_si256((const __m256i *)counts);
+    __m256i loaded_mask_a = _mm256_loadu_si256((const __m256i *)masks_a);
+    __m256i loaded_mask_b = _mm256_loadu_si256((const __m256i *)masks_b);
     __m256i loaded_a = _mm256_and_si256(loaded, loaded_mask_a);
     return {
         hsum_8x32(_mm256_andnot_si256(loaded_mask_b, loaded_a)),
@@ -93,15 +69,15 @@ std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const st
     };
 }
 
-unsigned char sum_with_mask_3(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
-    __m256i loaded = _mm256_loadu_si256((const __m256i *)counts.data());
-    __m256i loaded_mask = _mm256_loadu_si256((const __m256i *)(masks[0].first.data()));
-    loaded_mask = _mm256_or_si256(loaded_mask, _mm256_loadu_si256((const __m256i*)(masks[1].first.data())));
-    loaded_mask = _mm256_or_si256(loaded_mask, _mm256_loadu_si256((const __m256i*)(masks[2].first.data())));
+unsigned char sum_with_mask_3(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
+    __m256i loaded = _mm256_loadu_si256((const __m256i *)counts);
+    __m256i loaded_mask = _mm256_loadu_si256((const __m256i *)(masks[0].first));
+    loaded_mask = _mm256_or_si256(loaded_mask, _mm256_loadu_si256((const __m256i*)(masks[1].first)));
+    loaded_mask = _mm256_or_si256(loaded_mask, _mm256_loadu_si256((const __m256i*)(masks[2].first)));
     return hsum_8x32(_mm256_and_si256(loaded, loaded_mask));
 }
 
-unsigned char sum_with_mask_4(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
+unsigned char sum_with_mask_4(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
     __m256i loaded = _mm256_loadu_si256((const __m256i *)counts.data());
     __m256i loaded_mask = _mm256_loadu_si256((const __m256i *)(masks[0].first.data()));
     __m256i loaded_mask2 = _mm256_loadu_si256((const __m256i*)masks[1].first.data());
@@ -110,7 +86,7 @@ unsigned char sum_with_mask_4(const std::array<unsigned char, 32>& counts, const
     return hsum_8x32(_mm256_and_si256(loaded, _mm256_or_si256(loaded_mask, loaded_mask2)));
 }
 
-unsigned char sum_with_mask_5(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
+unsigned char sum_with_mask_5(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
     __m256i loaded = _mm256_loadu_si256((const __m256i *)counts.data());
     __m256i loaded_mask = _mm256_loadu_si256((const __m256i *)(masks[0].first.data()));
     __m256i loaded_mask2 = _mm256_loadu_si256((const __m256i*)masks[1].first.data());
@@ -120,13 +96,14 @@ unsigned char sum_with_mask_5(const std::array<unsigned char, 32>& counts, const
     return hsum_8x32(_mm256_and_si256(loaded, _mm256_or_si256(loaded_mask, loaded_mask2)));
 }
 #else
-constexpr unsigned char sum_with_mask(const std::array<unsigned char, 32>& counts, const std::array<unsigned char, 32>& masks) {
+constexpr unsigned char sum_with_mask(const unsigned char (&counts)[32], const unsigned char (&masks)[32]) {
     unsigned char acc = 0;
     for (size_t i=0; i < NUM_COMBINATIONS; i++) acc += counts[i] & masks[i];
     return acc;
 }
 
-std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const std::array<unsigned char, 32>& counts, const std::array<unsigned char, 32>& masks_a, const std::array<unsigned char, 32>& masks_b) {
+std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const unsigned char (&counts)[32], const unsigned char (&masks_a)[32],
+                                                                        const unsigned char (&masks_b)[32]) {
     std::tuple<unsigned char, unsigned char, unsigned char> accs{0, 0, 0};
     for (size_t i=0; i < NUM_COMBINATIONS; i++) {
         std::get<0>(accs) += masks_a[i] & ~masks_b[i] & counts[i];
@@ -136,7 +113,7 @@ std::tuple<unsigned char, unsigned char, unsigned char> sum_with_mask_2(const st
     return accs;
 }
 
-unsigned char sum_with_mask_3(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
+unsigned char sum_with_mask_3(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
     unsigned char acc = 0;
     for (size_t i=0; i < NUM_COMBINATIONS; i++) {
         unsigned char mask = masks[0].first[i];
@@ -146,7 +123,7 @@ unsigned char sum_with_mask_3(const std::array<unsigned char, 32>& counts, const
     return acc;
 }
 
-unsigned char sum_with_mask_4(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
+unsigned char sum_with_mask_4(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
     unsigned char acc = 0;
     for (size_t i=0; i < NUM_COMBINATIONS; i++) {
         unsigned char mask = masks[0].first[i];
@@ -156,7 +133,7 @@ unsigned char sum_with_mask_4(const std::array<unsigned char, 32>& counts, const
     return acc;
 }
 
-unsigned char sum_with_mask_5(const std::array<unsigned char, 32>& counts, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& masks) {
+unsigned char sum_with_mask_5(const unsigned char (&counts)[32], const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&masks)[5]) {
     unsigned char acc = 0;
     for (size_t i=0; i < NUM_COMBINATIONS; i++) {
         unsigned char mask = masks[0].first[i];
@@ -189,11 +166,11 @@ constexpr float interpolate_weights(const Weights& weights, const Pick& pick) {
     return XY * XY_weight + Xy * Xy_weight + xY * xY_weight + xy * xy_weight;
 }
 
-float get_casting_probability_0(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_0(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     return 1;
 }
 
-float get_casting_probability_1(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_1(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     /* std::cout << "Lands: W:" << (unsigned int)lands[1] << " U:" << (unsigned int)lands[2] << " B:" << (unsigned int)lands[3] << " R:" << (unsigned int)lands[4] << " G:" << (unsigned int)lands[5] << ", "; */
     /* std::cout << "CMC: " << (unsigned int)cmc << " and Requirement: "; */
     /* if (requirements[0].first[1]) std::cout << "W:"; */
@@ -205,7 +182,7 @@ float get_casting_probability_1(const Lands& lands, const unsigned char cmc, con
     return constants.get_prob_to_cast(offset, sum_with_mask(lands, requirements[0].first));
 }
 
-float get_casting_probability_2(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_2(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     const auto [land_count_a, land_count_b, land_count_ab] = sum_with_mask_2(lands, requirements[0].first, requirements[1].first);
     /* std::cout << "Lands: W:" << (unsigned int)lands[1] << " U:" << (unsigned int)lands[2] << " B:" << (unsigned int)lands[3] << " R:" << (unsigned int)lands[4] << " G:" << (unsigned int)lands[5] << ", "; */
     /* std::cout << "CMC: " << (unsigned int)cmc << " and Requirements: "; */
@@ -224,7 +201,7 @@ float get_casting_probability_2(const Lands& lands, const unsigned char cmc, con
     return constants.get_prob_to_cast(offset, land_count_a, land_count_b, land_count_ab);
 }
 
-float get_casting_probability_3(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_3(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     unsigned char total_devotion = 0;
     float probability = 1.f;
     for (size_t i=0; i < 3; i++) {
@@ -236,7 +213,7 @@ float get_casting_probability_3(const Lands& lands, const unsigned char cmc, con
     return probability * constants.get_prob_to_cast(cmc, total_devotion, land_count);
 }
 
-float get_casting_probability_4(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_4(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     unsigned char total_devotion = 0;
     float probability = 1.f;
     for (size_t i=0; i < 4; i++) {
@@ -248,7 +225,7 @@ float get_casting_probability_4(const Lands& lands, const unsigned char cmc, con
     return probability * constants.get_prob_to_cast(cmc, total_devotion, land_count);
 }
 
-float get_casting_probability_5(const Lands& lands, const unsigned char cmc, const std::array<std::pair<std::array<unsigned char, NUM_COMBINATIONS>, unsigned char>, 5>& requirements, const size_t offset, const Constants& constants) {
+float get_casting_probability_5(const Lands& lands, const unsigned char cmc, const std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> (&requirements)[5], const size_t offset, const Constants& constants) {
     unsigned char total_devotion = 0;
     float probability = 1.f;
     for (size_t i=0; i < 5; i++) {
@@ -262,19 +239,19 @@ float get_casting_probability_5(const Lands& lands, const unsigned char cmc, con
 
 float get_casting_probability(const Lands& lands, const unsigned short card_index, const Constants& constants) {
     const ColorRequirement& requirements = constants.color_requirements[card_index];
-    switch(std::get<1>(requirements)) {
+    switch(requirements.requirements_count) {
         case 0:
-        return get_casting_probability_0(lands, constants.cmcs[card_index], std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_0(lands, constants.cmcs[card_index], requirements.requirements,  requirements.offset, constants);
         case 1:
-        return get_casting_probability_1(lands, constants.cmcs[card_index],  std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_1(lands, constants.cmcs[card_index],  requirements.requirements,  requirements.offset, constants);
         case 2:
-        return get_casting_probability_2(lands, constants.cmcs[card_index],  std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_2(lands, constants.cmcs[card_index],  requirements.requirements,  requirements.offset, constants);
         case 3:
-        return get_casting_probability_3(lands, constants.cmcs[card_index],  std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_3(lands, constants.cmcs[card_index],  requirements.requirements,  requirements.offset, constants);
         case 4:
-        return get_casting_probability_4(lands, constants.cmcs[card_index],  std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_4(lands, constants.cmcs[card_index],  requirements.requirements,  requirements.offset, constants);
         case 5:
-        return get_casting_probability_5(lands, constants.cmcs[card_index],  std::get<0>(requirements),  std::get<2>(requirements), constants);
+        return get_casting_probability_5(lands, constants.cmcs[card_index],  requirements.requirements,  requirements.offset, constants);
     }
     return 0;
 }
@@ -298,8 +275,8 @@ constexpr float rating_oracle(const index_type card_index, const Lands&, const V
 }
 
 constexpr float pick_synergy_oracle(const index_type, const Lands&, const Variables&, const Pick&,
-                          const Constants&, std::array<float, MAX_PICKED> probabilities, const index_type num_valid_indices,
-                          const float probability, const std::array<float, MAX_PICKED>& synergies) {
+                                    const Constants&, const float (&probabilities)[MAX_PICKED], const index_type num_valid_indices,
+                                    const float probability, const float (&synergies)[MAX_PICKED]) {
     if (num_valid_indices == 0) return 0;
     float total_synergy = 0;
     for (size_t i=0; i < num_valid_indices; i++) total_synergy += probabilities[i] * synergies[i];
@@ -313,7 +290,7 @@ constexpr float fixing_oracle(const index_type card_index, const Lands& lands, c
         for (size_t i=0; i < NUM_COLORS; i++){
             if (constants.card_colors[card_real_index][i]) {
                 unsigned char count = 0;
-                for (size_t j=0; j < INCLUSION_MAP[i].size(); j++) count += lands[j];
+                for (size_t j=0; j < 16; j++) count += lands[INCLUSION_MAP[i][j]];
                 if (count >= LANDS_TO_INCLUDE_COLOR) overlap += MAX_SCORE / 5;
             }
         }
@@ -324,8 +301,8 @@ constexpr float fixing_oracle(const index_type card_index, const Lands& lands, c
 }
 
 constexpr float internal_synergy_oracle(const index_type, const Lands&, const Variables&, const Pick&, const Constants&,
-                              const std::array<float, MAX_PICKED>& probabilities, const index_type num_valid_indices,
-                              const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& synergies) {
+                              const float (&probabilities)[MAX_PICKED], const index_type num_valid_indices,
+                              const float (&synergies)[MAX_PICKED][MAX_PICKED]) {
     if (num_valid_indices < 2) return 0;
     float internal_synergy = 0;
     for(index_type i=0; i < num_valid_indices; i++) {
@@ -339,8 +316,8 @@ constexpr float internal_synergy_oracle(const index_type, const Lands&, const Va
 }
 
 template<size_t Size>
-constexpr float sum_gated_rating(const Variables& variables, const std::array<index_type, Size>& indices,
-                       const Constants& constants, const std::array<float, Size> probabilities,
+constexpr float sum_gated_rating(const Variables& variables, const index_type (&indices)[Size],
+                       const Constants& constants, const float (&probabilities)[Size],
                        const index_type num_valid_indices) {
     float result = 0;
     if (num_valid_indices == 0) return 0;
@@ -354,13 +331,13 @@ constexpr float sum_gated_rating(const Variables& variables, const std::array<in
     return result / (float) num_valid_indices;
 }
 
-constexpr float openness_oracle(const index_type, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
-                      const std::array<float, MAX_SEEN> probabilities, const index_type num_valid_indices) {
+float openness_oracle(const index_type, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
+                      const float (&probabilities)[MAX_SEEN], const index_type num_valid_indices) {
     return sum_gated_rating(variables, pick.seen, constants, probabilities, num_valid_indices);
 }
 
 constexpr float colors_oracle(const index_type, const Lands&, const Variables& variables, const Pick& pick, const Constants& constants,
-                    const std::array<float, MAX_PICKED> probabilities, const index_type num_valid_indices) {
+                              const float (&probabilities)[MAX_PICKED], const index_type num_valid_indices) {
     return sum_gated_rating(variables, pick.picked, constants, probabilities, num_valid_indices);
 }
 
@@ -368,10 +345,10 @@ float get_score(const index_type card_index, const Lands& lands, const Variables
                 const float rating_weight, const float pick_synergy_weight, const float fixing_weight,
                 const float internal_synergy_weight, const float openness_weight, const float colors_weight,
                 const Constants& constants, const index_type num_valid_picked_indices, const index_type num_valid_seen_indices,
-                const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& internal_synergies,
-                const std::array<float, MAX_PICKED>& pick_synergies) {
-    std::array<float, MAX_PICKED> picked_probabilities;
-    std::array<float, MAX_SEEN> seen_probabilities;
+                const float (&internal_synergies)[MAX_PICKED][MAX_PICKED],
+                const float (&pick_synergies)[MAX_PICKED]) {
+    float picked_probabilities[MAX_PICKED];
+    float seen_probabilities[MAX_SEEN];
     for (index_type i=0; i < num_valid_picked_indices; i++) {
         picked_probabilities[i] =
                 std::max(get_casting_probability(lands, pick.picked[i], constants) - variables.prob_to_include, 0.f)
@@ -406,7 +383,7 @@ float get_score(const index_type card_index, const Lands& lands, const Variables
 
 float do_climb(const index_type card_index, const Variables& variables, const Pick& pick, const Constants& constants,
                const index_type num_valid_picked_indices, const index_type num_valid_seen_indices,
-               const std::array<std::array<float, MAX_PICKED>, MAX_PICKED>& internal_synergies) {
+               const float (&internal_synergies)[MAX_PICKED][MAX_PICKED]) {
     float previous_score = -1;
     float current_score = 0;
     const float rating_weight = interpolate_weights(variables.rating_weights, pick);
@@ -415,24 +392,24 @@ float do_climb(const index_type card_index, const Variables& variables, const Pi
     const float internal_synergy_weight = interpolate_weights(variables.internal_synergy_weights, pick);
     const float openness_weight = interpolate_weights(variables.openness_weights, pick);
     const float colors_weight = interpolate_weights(variables.colors_weights, pick);
-    std::array<float, MAX_PICKED> pick_synergies;
+    float pick_synergies[MAX_PICKED];
     for (index_type i=0; i < num_valid_picked_indices; i++) {
         pick_synergies[i] = calculate_synergy(pick.picked[i], pick.in_pack[card_index], variables, constants);
     }
-    Lands lands = DEFAULT_LANDS;
-    std::array<bool, COLORS.size() + 1> previous_adds{false};
-    std::array<bool, COLORS.size() + 1> previous_removes{false};
+    Lands lands;
+    for (size_t i=0; i < NUM_COMBINATIONS; i++) lands[i] = DEFAULT_LANDS[i];
     while (previous_score < current_score) {
         previous_score = current_score;
         /* Lands next_lands = lands; */
         /* size_t added_index=0; */
         /* size_t removed_index=0; */
         for(size_t remove_index=1; remove_index < COLORS.size() + 1; remove_index++) {
-            if (lands[remove_index] > 0 && !previous_adds[remove_index]) {
+            if (lands[remove_index] > 0) {
                 bool breakout = false;
                 for (size_t add_index=1; add_index < COLORS.size() + 1; add_index++) {
-                    if (add_index != remove_index && !previous_removes[add_index]) {
-                        Lands new_lands = lands;
+                    if (add_index != remove_index) {
+                        Lands new_lands;
+                        for (size_t i=0; i < NUM_COMBINATIONS; i++) new_lands[i] = lands[i];
                         new_lands[remove_index] -= 1;
                         new_lands[add_index] += 1;
                         float score = get_score(card_index, new_lands, variables, pick, rating_weight, pick_synergy_weight,
@@ -440,14 +417,8 @@ float do_climb(const index_type card_index, const Variables& variables, const Pi
                                                 constants, num_valid_picked_indices, num_valid_seen_indices,
                                                 internal_synergies, pick_synergies);
                         if (score > current_score) {
-    //                        std::cout << "New score " << score << " remove_index " << remove_index << " add_index " << add_index << std::endl;
-                            /* previous_adds[add_index] = true; */
-                            /* previous_removes[remove_index] = true; */
-                            /* added_index = add_index; */
-                            /* removed_index = remove_index; */
                             current_score = score;
-                            lands = new_lands;
-                            /* next_lands = new_lands; */
+                            for (size_t i=0; i < NUM_COMBINATIONS; i++) lands[i] = new_lands[i];
                             breakout = true;
                             break;
                         }
@@ -456,37 +427,34 @@ float do_climb(const index_type card_index, const Variables& variables, const Pi
                 if (breakout) break;
             }
         }
-        /* lands = next_lands; */
-        /* previous_adds[added_index] = true; */
-        /* previous_removes[removed_index] = true; */
     }
     return current_score;
 }
 
 std::pair<double, bool> calculate_loss(const Pick& pick, const Variables& variables, const float temperature, const Constants& constants) {
     std::array<double, MAX_PACK_SIZE> scores{0};
-    auto num_valid_indices = (index_type)pick.in_pack.size();
-    for (size_t i=0; i < pick.in_pack.size(); i++) {
+    auto num_valid_indices = (index_type)MAX_PACK_SIZE;
+    for (size_t i=0; i < MAX_PACK_SIZE; i++) {
         if (pick.in_pack[i] == std::numeric_limits<index_type>::max()) {
             num_valid_indices = (index_type)i;
             break;
         }
     }
-    auto num_valid_picked_indices = (index_type)pick.picked.size();
-    auto num_valid_seen_indices = (index_type)pick.seen.size();
-    for (size_t i=0; i < pick.picked.size(); i++) {
+    auto num_valid_picked_indices = (index_type)MAX_PICKED;
+    auto num_valid_seen_indices = (index_type)MAX_SEEN;
+    for (size_t i=0; i < MAX_PICKED; i++) {
         if (pick.picked[i] == std::numeric_limits<index_type>::max()) {
             num_valid_picked_indices = (index_type)i;
             break;
         }
     }
-    for (size_t i=0; i < pick.seen.size(); i++) {
+    for (size_t i=0; i < MAX_SEEN; i++) {
         if (pick.seen[i] == std::numeric_limits<index_type>::max()) {
             num_valid_seen_indices = (index_type)i;
             break;
         }
     }
-    std::array<std::array<float, MAX_PICKED>, MAX_PICKED> internal_synergies{{0}};
+    float internal_synergies[MAX_PICKED][MAX_PICKED]{{0}};
     for (index_type i=0; i < num_valid_picked_indices; i++) {
         for (index_type j=0; j < i; j++) {
             internal_synergies[i][j] = calculate_synergy(pick.picked[i], pick.picked[j], variables, constants);
@@ -534,6 +502,7 @@ std::array<double, 4> get_batch_loss(const std::vector<Pick>& picks, const Varia
                  + NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT * result[2];
     return result;
 }
+#endif
 class calculate_batch_loss;
 
 #ifdef USE_SYCL
@@ -650,6 +619,9 @@ std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::ve
         std::rethrow_exception(std::current_exception());
     }
 #else
+#ifdef USE_CUDA
+    return run_simulations_cuda(variables, picks, temperature, constants);
+#else
     std::array<std::future<std::array<double, 4>>, POPULATION_SIZE> futures;
     std::array<std::thread, POPULATION_SIZE> threads;
     for (size_t i=0; i < POPULATION_SIZE; i++) {
@@ -670,18 +642,17 @@ std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::ve
 //        results[i] = get_batch_loss(picks, variables[i], temperature, *constants);
 //    }
 #endif
+#endif
     return results;
 }
 
-Weights generate_weights(std::mt19937_64& gen) {
-    Weights result{};
+void generate_weights(std::mt19937_64& gen, Weights& result) {
     std::uniform_real_distribution<float> weight_dist(MIN_WEIGHT, MAX_WEIGHT);
     for (size_t i=0; i < PACKS; i++) {
         for (size_t j=0; j < PACK_SIZE; j++) {
             result[i][j] = weight_dist(gen);
         }
     }
-    return result;
 }
 
 int main(const int argc, const char* argv[]) {
@@ -701,9 +672,6 @@ int main(const int argc, const char* argv[]) {
     if (argc > 4) initial_variables = std::make_shared<Variables>(load_variables(argv[4]));
     else {
         initial_variables = std::make_shared<Variables>();
-#ifdef OPTIMIZE_RATINGS
-        initial_variables->ratings = INITIAL_RATINGS;
-#endif
     }
     if (argc > 3) seed = std::strtoull(argv[3], nullptr, 10);
     std::cout.precision(PRECISION);

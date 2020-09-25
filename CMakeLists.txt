@@ -15,10 +15,21 @@
 # The minimum version of 'cmake' necessary to build this project
 cmake_minimum_required (VERSION 3.17.1)
 
-# The project name and version, release numbers
-project (DraftBotOptimization LANGUAGES CXX
-                              VERSION 0.0.1)
+set(OPTIMIZATION_ALGORITHMS "Genetic;CrossEntropy;DifferentialEvolution;CmaEs" CACHE STRING "The algorithms to compile")
 
+option(USE_SYCL "Use the SYCL implementation" OFF)
+option(OPTIMIZE_RATINGS "Optimize ratings as well as weights" OFF)
+option(USE_ASAN "Compile with AddressSanitizer" OFF)
+option(CONSIDER_NON_BASICS "Consider non basic lands in calculations" OFF)
+option(USE_CUDA "USE_ASAN the CUDA Implementation" OFF)
+
+if (USE_CUDA)
+    project (DraftBotOptimization LANGUAGES CXX CUDA
+                                  VERSION 0.0.1)
+else()
+    project (DraftBotOptimization LANGUAGES CXX
+                                  VERSION 0.0.1)
+endif()
 # Typically you don't care so much for a third party library's tests to be
 # run from your own project's code.
 set(JSON_BuildTests OFF CACHE INTERNAL "")
@@ -37,13 +48,6 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 add_subdirectory(extern/json)
 find_package(Threads REQUIRED)
 
-set(OPTIMIZATION_ALGORITHMS "Genetic;CrossEntropy;DifferentialEvolution;CmaEs" CACHE STRING "The algorithms to compile")
-
-option(USE_SYCL "Use the SYCL implementation" OFF)
-option(OPTIMIZE_RATINGS "Optimize ratings as well as weights" OFF)
-option(USE_ASAN "Compile with AddressSanitizer" OFF)
-option(CONSIDER_NON_BASICS "Consider non basic lands in calculations" OFF)
-
 foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
     add_executable(${TARGET_NAME} draftbot_optimization.cpp parse_json.cpp algorithms/shared/util.cpp draftbot_optimization.h algorithms/shared/util.h algorithms/shared/parameters.h)
@@ -59,6 +63,11 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
         target_link_libraries(${TARGET_NAME} PRIVATE CUDA::cudart CUDA::cublas CUDA::cusolver)
         target_include_directories (${TARGET_NAME} PRIVATE "${CUDA_DIR}/include")
     endif()
+    if (USE_CUDA)
+        target_compile_definitions(${TARGET_NAME} PRIVATE USE_CUDA)
+        target_sources(${TARGET_NAME} PRIVATE draftbot_optimization.cu)
+        target_compile_options(${TARGET_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr -arch=sm_75 --use_fast_math --extra-device-vectorization>)
+    endif()
     if (CONSIDER_NON_BASICS)
         target_compile_definitions(${TARGET_NAME} PRIVATE CONSIDER_NON_BASICS)
     endif()
@@ -66,9 +75,9 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     if(OPTIMIZE_RATINGS)
         target_compile_definitions(${TARGET_NAME} PRIVATE OPTIMIZE_RATINGS)
     endif()
-    set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/")
     if (MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE -W4 /arch:AVX2)
+        target_compile_options(${TARGET_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-W4 /arch:AVX2>)
+        set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/")
         if (USE_ASAN)
             target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address)
             target_link_options(${TARGET_NAME} PRIVATE /debug -incremental:no /wholearchive:clang_rt.asan_dynamic-x86_64.lib /wholearchive:clang_rt.asan_dynamic_runtime_thunk-x86_64.lib)
@@ -78,17 +87,16 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     endif()
 
     set_target_properties (${TARGET_NAME} PROPERTIES CXX_STANDARD 20
+                                                     CUDA_STANDARD 14
                                                      CXX_STANDARD_REQUIRED ON
                                                      CXX_EXTENSIONS OFF)
 endforeach()
 
 if(USE_SYCL)
-    set(CMAKE_MODULE_PATH cmake)
-    find_package(ComputeCpp)
     foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
         set(TARGET_NAME "DraftBot${ALGORITHM}Optimization")
         target_compile_definitions(${TARGET_NAME} PRIVATE USE_SYCL)
-        target_include_directories (${TARGET_NAME} PRIVATE "${CUDA_DIR}/include" extern/concurrentqueue)
-        add_sycl_to_target(TARGET ${TARGET_NAME} SOURCES draftbot_optimization.cpp)
+        target_include_directories (${TARGET_NAME} PRIVATE extern/concurrentqueue C:/opt/include)
+        target_compile_options(${TARGET_NAME} PRIVATE -fsycl -fsycl-targets=nvptx64-nvidia-cuda-sycldevice -fno-sycl-libspirv --cuda-path=C:/PROGRA~1/NVIDIA~2/CUDA/v10.1/ -Xsycl-target-backend -cuda-gpu-arch=sm_75 -v)
     endforeach()
 endif()

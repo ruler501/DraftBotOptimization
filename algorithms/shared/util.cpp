@@ -6,7 +6,7 @@
 #include "../../draftbot_optimization.h"
 #include "parameters.h"
 
-Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
+void mutate_weights(Weights& weights, std::mt19937_64& gen) {
     std::normal_distribution<float> std_dev_weights{0, WEIGHT_VOLATILITY};
     std::uniform_int_distribution<size_t> int_distribution(0, WEIGHT_INV_PROB_TO_CHANGE - 1);
     for (auto& pack : weights) {
@@ -17,7 +17,6 @@ Weights mutate_weights(Weights& weights, std::mt19937_64& gen) {
             }
         }
     }
-    return weights;
 }
 
 Variables mutate_variables(Variables& variables, std::mt19937_64& gen) {

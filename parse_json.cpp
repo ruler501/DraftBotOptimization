@@ -13,7 +13,7 @@
 
 #include "draftbot_optimization.h"
 
-const std::map<std::string, Colors> FETCH_LANDS{ // NOLINT(cert-err58-cpp)
+const std::map<std::string, std::array<bool, 5>> FETCH_LANDS{ // NOLINT(cert-err58-cpp)
         {"Arid Mesa", {true, false, false, true, false}},
         {"Bloodstained Mire", {false, false, true, true, false}},
         {"Flooded Strand", {true, true, false, false, false}},
@@ -31,7 +31,7 @@ const std::map<std::string, Colors> FETCH_LANDS{ // NOLINT(cert-err58-cpp)
 };
 std::array<float, NUM_CARDS> INITIAL_RATINGS;
 
-bool does_intersect(const Colors& a, const Colors& b) {
+bool does_intersect(const std::array<bool, NUM_COLORS>& a, const std::array<bool, NUM_COLORS>& b) {
     return (a[0] && b[0]) || (a[1] && b[1]) || (a[2] && b[2]) || (a[3] && b[3]) || (a[4] && b[4]);
 }
 
@@ -55,10 +55,10 @@ void populate_constants(const std::string& file_name, Constants& constants) {
         const auto fetch_land = FETCH_LANDS.find(name);
         constants.is_fetch[i] = fetch_land != FETCH_LANDS.end();
         if (constants.is_fetch[i]) {
-            constants.card_colors[i] = fetch_land->second;
+            for (size_t j=0; j < 5; j++) constants.card_colors[i][j] = fetch_land->second[j];
         } else {
             const auto card_color_identity = card["color_identity"].get<std::vector<std::string>>();
-            Colors our_card_colors{false, false, false, false, false};
+            bool our_card_colors[5]{false, false, false, false, false};
             for (const std::string& color : card_color_identity) {
                 if(color == "W") {
                     our_card_colors[0] = true;
@@ -72,12 +72,12 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                     our_card_colors[4] = true;
                 }
             }
-            constants.card_colors[i] = our_card_colors;
+            for (size_t j=0; j < 5; j++) constants.card_colors[i][j] = our_card_colors[j];
         }
         const auto parsed_cost = card["parsed_cost"].get<std::vector<std::string>>();
-        std::map<Colors, unsigned char> color_requirement_map;
+        std::map<std::array<bool, NUM_COLORS>, unsigned char> color_requirement_map;
         for (const std::string& symbol : parsed_cost) {
-            Colors colors{false};
+            std::array<bool, NUM_COLORS> colors{false};
             if (symbol.find('p') != std::string::npos || symbol.find('2') != std::string::npos) {
                 continue;
             }
@@ -97,29 +97,34 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                 }
             }
         }
-        ColorRequirement color_requirement{{{{{false}, 0}}}, (unsigned char)color_requirement_map.size(), 0};
+        ColorRequirement color_requirement{{}, (unsigned char)color_requirement_map.size(), 0};
         unsigned char index = 0;
         for (const auto& [cost_colors, count] : color_requirement_map) {
-            if (index >= std::get<0>(color_requirement).size()) {
+            if (index >= 5) {
                 std::cerr << "Too many color requirements " << color_requirement_map.size() << " for card " << name << std::endl;
             }
-            std::array<unsigned char, NUM_COMBINATIONS> valid_lands{false};
+            std::array<unsigned char, NUM_COMBINATIONS> valid_lands{0};
             for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(cost_colors, COLOR_COMBINATIONS[j]) ? ~(unsigned char)0 : 0;
-            std::get<0>(color_requirement)[index] = {valid_lands, count};
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) color_requirement.requirements[index].first[j] = valid_lands[j];
+            color_requirement.requirements[index].second = count;
             index += 1;
         }
         if (color_requirement_map.size() == 1) {
-            std::get<2>(color_requirement) = ((constants.cmcs[i] << PROB_DIM_1_EXP) | std::get<0>(color_requirement)[0].second) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
+            color_requirement.offset = ((constants.cmcs[i] << PROB_DIM_1_EXP) | color_requirement.requirements[0].second) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
         } else if (color_requirement_map.size() == 2) {
-            size_t required_a = std::get<0>(color_requirement)[0].second;
-            size_t required_b = std::get<0>(color_requirement)[1].second;
+            size_t required_a = color_requirement.requirements[0].second;
+            size_t required_b = color_requirement.requirements[1].second;
             if (required_a < required_b) {
-                std::swap(std::get<0>(color_requirement)[0], std::get<0>(color_requirement)[1]);
+                std::swap(color_requirement.requirements[0], color_requirement.requirements[1]);
                 std::swap(required_a, required_b);
             }
-            std::get<2>(color_requirement) = ((((constants.cmcs[i] << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << (PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
+            color_requirement.offset = ((((constants.cmcs[i] << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << (PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
         }
-        constants.color_requirements[i] = color_requirement;
+        for (size_t j=0; j < color_requirement_map.size(); j++) {
+            for (size_t k=0; k < NUM_COMBINATIONS; k++) constants.color_requirements[i].requirements[j].first[k] = color_requirement.requirements[j].first[k];
+            constants.color_requirements[i].requirements[j].second = color_requirement.requirements[j].second;
+        }
+        constants.color_requirements[i].offset = color_requirement.offset;
         const auto elo_iter = card.find("elo");
         if (elo_iter != card.end()) {
             const auto elo = elo_iter->get<float>();
@@ -221,7 +226,7 @@ void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
 std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
     std::shared_ptr<Pick> result = std::make_shared<Pick>();
     auto _in_pack = pick_json["cardsInPack"];
-    if (_in_pack.size() > result->in_pack.size()) {
+    if (_in_pack.size() > MAX_PACK_SIZE) {
 //        std::cerr << "Pack too big: " << _in_pack.size() << std::endl;
         return {};
     }
@@ -230,9 +235,9 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->in_pack[i] = index.get<index_type>();
         else return {};
     }
-    for (size_t i=_in_pack.size(); i < result->in_pack.size(); i++) result->in_pack[i] = std::numeric_limits<index_type>::max();
+    for (size_t i=_in_pack.size(); i < MAX_PACK_SIZE; i++) result->in_pack[i] = std::numeric_limits<index_type>::max();
     auto _seen = pick_json["seen"];
-    if (_seen.size() > result->seen.size()) {
+    if (_seen.size() > MAX_SEEN) {
 //        std::cerr << "Seen too big: " << _seen.size() << std::endl;
         return {};
     }
@@ -241,9 +246,9 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->seen[i] = index.get<index_type>();
         else return {};
     }
-    for (size_t i=_seen.size(); i < result->seen.size(); i++) result->seen[i] = std::numeric_limits<index_type>::max();
+    for (size_t i=_seen.size(); i < MAX_SEEN; i++) result->seen[i] = std::numeric_limits<index_type>::max();
     auto _picked = pick_json["picked"];
-    if (_picked.size() > result->picked.size()) {
+    if (_picked.size() > MAX_PICKED) {
 //        std::cerr << "Picked too big: " << _picked.size() << std::endl;
         return {};
     }
@@ -252,7 +257,7 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->picked[i] = index.get<index_type>();
         else return {};
     }
-    for (size_t i=_picked.size(); i < result->picked.size(); i++) result->picked[i] = std::numeric_limits<index_type>::max();
+    for (size_t i=_picked.size(); i < MAX_PICKED; i++) result->picked[i] = std::numeric_limits<index_type>::max();
     nlohmann::json pack = pick_json["pack"];
     if (!pack.is_null()) result->pack_num = pack.get<unsigned char>();
     else return {};
@@ -348,18 +353,25 @@ Variables load_variables(const std::string& file_name) {
     nlohmann::json variables;
     std::ifstream variables_file(file_name);
     variables_file >> variables;
-    result.rating_weights = variables["ratingWeights"].get<Weights>();
-    result.pick_synergy_weights = variables["pickSynergyWeights"].get<Weights>();
-    result.fixing_weights = variables["fixingWeights"].get<Weights>();
-    result.internal_synergy_weights = variables["internalSynergyWeights"].get<Weights>();
-    result.openness_weights = variables["opennessWeights"].get<Weights>();
-    result.colors_weights = variables["colorsWeights"].get<Weights>();
+    auto rating_weights = variables["ratingWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.rating_weights[i][j] = rating_weights[i][j];
+    auto pick_synergy_weights = variables["pickSynergyWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.pick_synergy_weights[i][j] = pick_synergy_weights[i][j];
+    auto fixing_weights = variables["fixingWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.rating_weights[i][j] = rating_weights[i][j];
+    auto internal_synergy_weights = variables["internalSynergyWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.internal_synergy_weights[i][j] = internal_synergy_weights[i][j];
+    auto openness_weights = variables["opennessWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.openness_weights[i][j] = openness_weights[i][j];
+    auto colors_weights = variables["colorsWeights"].get<std::array<std::array<float, PACK_SIZE>, PACKS>>();
+    for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) result.colors_weights[i][j] = colors_weights[i][j];
     result.prob_to_include = variables["probToInclude"].get<float>();
     result.prob_multiplier = 1 / (1 - result.prob_to_include);
     result.similarity_clip = variables["similarityClip"].get<float>();
     result.similarity_multiplier = 1 / (1 - result.similarity_clip);
 #ifdef OPTIMIZE_RATINGS
-    result.ratings = variables["ratings"].get<std::array<float, NUM_CARDS>>();
+    auto ratings = variables["ratings"].get<std::array<float, NUM_CARDS>>();
+    for (size_t i=0; i < NUM_CARDS; i++) result.ratings[i] = ratings[i];
 #endif
     result.is_fetch_multiplier = variables["isFetchMultiplier"].get<float>();
     result.has_basic_types_multiplier = variables["hasBasicTypesMultiplier"].get<float>();

@@ -16,24 +16,22 @@
 #include "shared/parameters.h"
 #include "shared/util.h"
 
-Weights average_crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64&) {
-    Weights result = weights1;
+void average_crossover_weights(const Weights& weights1, const Weights& weights2, std::mt19937_64&, Weights& result) {
     for (size_t pack=0; pack < PACKS; pack++) {
         for (size_t pick=0; pick < PACK_SIZE; pick++) {
             result[pack][pick] = (weights1[pack][pick] + weights2[pack][pick]) / 2;
         }
     }
-    return result;
 }
 
 Variables average_crossover_variables(const Variables& variables1, const Variables& variables2, std::mt19937_64& gen) {
     Variables result = variables1;
-    result.rating_weights = average_crossover_weights(variables1.rating_weights, variables2.rating_weights, gen);
-    result.pick_synergy_weights = average_crossover_weights(variables1.pick_synergy_weights, variables2.pick_synergy_weights, gen);
-    result.fixing_weights = average_crossover_weights(variables1.fixing_weights, variables2.fixing_weights, gen);
-    result.internal_synergy_weights = average_crossover_weights(variables1.internal_synergy_weights, variables2.fixing_weights, gen);
-    result.openness_weights = average_crossover_weights(variables1.openness_weights, variables2.openness_weights, gen);
-    result.colors_weights = average_crossover_weights(variables1.colors_weights, variables2.colors_weights, gen);
+    average_crossover_weights(variables1.rating_weights, variables2.rating_weights, gen, result.rating_weights);
+    average_crossover_weights(variables1.pick_synergy_weights, variables2.pick_synergy_weights, gen, result.pick_synergy_weights);
+    average_crossover_weights(variables1.fixing_weights, variables2.fixing_weights, gen, result.fixing_weights);
+    average_crossover_weights(variables1.internal_synergy_weights, variables2.fixing_weights, gen, result.internal_synergy_weights);
+    average_crossover_weights(variables1.openness_weights, variables2.openness_weights, gen, result.openness_weights);
+    average_crossover_weights(variables1.colors_weights, variables2.colors_weights, gen, result.colors_weights);
     result.prob_to_include = (variables1.prob_to_include + variables2.prob_to_include) / 2;
     result.prob_multiplier = 1 / (1 - result.prob_to_include);
     result.similarity_clip = (variables1.similarity_clip + variables2.similarity_clip) / 2;
@@ -49,27 +47,26 @@ Variables average_crossover_variables(const Variables& variables1, const Variabl
 }
 
 template <typename Generator>
-Weights crossover_weights(const Weights& w1, const Weights& w2, Generator& gen) {
+void crossover_weights(const Weights& w1, const Weights& w2, Generator& gen, Weights& result) {
     std::uniform_int_distribution<size_t> coin{0, 1};
-    Weights result = w1;
     for (size_t i=0; i < PACKS; i++) {
         for (size_t j=0; j < PACK_SIZE; j++) {
             if (coin(gen) == 0) result[i][j] = w2[i][j];
+            else result[i][j] = w1[i][j];
         }
     }
-    return result;
 }
 
 template <typename Generator>
 Variables crossover_variables(const Variables& v1, const Variables& v2, Generator& gen) {
     std::uniform_int_distribution<size_t> coin{0, 1};
     Variables result = v1;
-    result.rating_weights = crossover_weights(v1.rating_weights, v2.rating_weights, gen);
-    result.pick_synergy_weights = crossover_weights(v1.pick_synergy_weights, v2.pick_synergy_weights, gen);
-    result.fixing_weights = crossover_weights(v1.fixing_weights, v2.fixing_weights, gen);
-    result.internal_synergy_weights = crossover_weights(v1.internal_synergy_weights, v2.internal_synergy_weights, gen);
-    result.openness_weights = crossover_weights(v1.openness_weights, v2.openness_weights, gen);
-    result.colors_weights = crossover_weights(v1.colors_weights, v2.colors_weights, gen);
+    crossover_weights(v1.rating_weights, v2.rating_weights, gen, result.rating_weights);
+    crossover_weights(v1.pick_synergy_weights, v2.pick_synergy_weights, gen, result.pick_synergy_weights);
+    crossover_weights(v1.fixing_weights, v2.fixing_weights, gen, result.fixing_weights);
+    crossover_weights(v1.internal_synergy_weights, v2.internal_synergy_weights, gen, result.internal_synergy_weights);
+    crossover_weights(v1.openness_weights, v2.openness_weights, gen, result.openness_weights);
+    crossover_weights(v1.colors_weights, v2.colors_weights, gen, result.colors_weights);
 #ifdef OPTIMIZE_RATINGS
     for (size_t i=0; i < NUM_CARDS; i++) {
         if (coin(gen) == 0) result.ratings[i] = v2.ratings[i];
