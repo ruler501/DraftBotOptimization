@@ -97,15 +97,17 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                 }
             }
         }
-        ColorRequirement color_requirement{{}, (unsigned char)color_requirement_map.size(), 0};
+        ColorRequirement color_requirement((unsigned char)color_requirement_map.size(), 0);
         unsigned char index = 0;
         for (const auto& [cost_colors, count] : color_requirement_map) {
             if (index >= 5) {
                 std::cerr << "Too many color requirements " << color_requirement_map.size() << " for card " << name << std::endl;
             }
-            std::array<unsigned char, NUM_COMBINATIONS> valid_lands{0};
-            for (size_t j=0; j < NUM_COMBINATIONS; j++) valid_lands[j] = does_intersect(cost_colors, COLOR_COMBINATIONS[j]) ? ~(unsigned char)0 : 0;
-            for (size_t j=0; j < NUM_COMBINATIONS; j++) color_requirement.requirements[index].first[j] = valid_lands[j];
+#ifdef CONSIDER_NON_BASICS
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) color_requirement.requirements[index].first[j] = does_intersect(cost_colors, COLOR_COMBINATIONS[j]) ? ~(unsigned char)0 : 0;
+#else
+            for (size_t j=0; j < 8; j++) color_requirement.requirements[index].first[j] = does_intersect(cost_colors, COLOR_COMBINATIONS[j]) ? ~(unsigned char)0 : 0;
+#endif
             color_requirement.requirements[index].second = count;
             index += 1;
         }
@@ -121,7 +123,11 @@ void populate_constants(const std::string& file_name, Constants& constants) {
             color_requirement.offset = ((((constants.cmcs[i] << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << (PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP);
         }
         for (size_t j=0; j < color_requirement_map.size(); j++) {
+#ifdef CONSIDER_NON_BASICS
             for (size_t k=0; k < NUM_COMBINATIONS; k++) constants.color_requirements[i].requirements[j].first[k] = color_requirement.requirements[j].first[k];
+#else
+            for (size_t k=0; k < 8; k++) constants.color_requirements[i].requirements[j].first[k] = color_requirement.requirements[j].first[k];
+#endif
             constants.color_requirements[i].requirements[j].second = color_requirement.requirements[j].second;
         }
         constants.color_requirements[i].offset = color_requirement.offset;
@@ -166,6 +172,7 @@ void populate_constants(const std::string& file_name, Constants& constants) {
                     constants.similarities[i][j] = dot_product / lengths[i] / lengths[j];
                     constants.similarities[j][i] = constants.similarities[i][j];
                 }
+                constants.similarities[i][i] = 10;
             }
         });
     }
@@ -214,7 +221,7 @@ void populate_prob_to_cast(const std::string& file_name, Constants& constants) {
                                 std::cerr << "Too big index at depth 5: " << land_count_ab << std::endl;
                                 continue;
                             }
-                            constants.get_prob_to_cast(cmc, required_a, required_b, land_count_a, land_count_b, land_count_ab) = item6.value().get<float>();
+                            get_prob_to_cast(constants.prob_to_cast, cmc, required_a, required_b, land_count_a, land_count_b, land_count_ab) = item6.value().get<float>();
                         }
                     }
                 }
@@ -235,6 +242,7 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->in_pack[i] = index.get<index_type>();
         else return {};
     }
+    result->in_pack_count = _in_pack.size();
     for (size_t i=_in_pack.size(); i < MAX_PACK_SIZE; i++) result->in_pack[i] = std::numeric_limits<index_type>::max();
     auto _seen = pick_json["seen"];
     if (_seen.size() > MAX_SEEN) {
@@ -246,6 +254,7 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->seen[i] = index.get<index_type>();
         else return {};
     }
+    result->seen_count = _seen.size();
     for (size_t i=_seen.size(); i < MAX_SEEN; i++) result->seen[i] = std::numeric_limits<index_type>::max();
     auto _picked = pick_json["picked"];
     if (_picked.size() > MAX_PICKED) {
@@ -257,6 +266,7 @@ std::shared_ptr<Pick> parse_pick(const nlohmann::json& pick_json) {
         if (!index.is_null()) result->picked[i] = index.get<index_type>();
         else return {};
     }
+    result->picked_count = _picked.size();
     for (size_t i=_picked.size(); i < MAX_PICKED; i++) result->picked[i] = std::numeric_limits<index_type>::max();
     nlohmann::json pack = pick_json["pack"];
     if (!pack.is_null()) result->pack_num = pack.get<unsigned char>();

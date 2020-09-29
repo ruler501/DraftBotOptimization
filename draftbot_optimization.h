@@ -24,25 +24,24 @@ constexpr size_t PRECISION = 10;
 
 // Optimization Hyperparameters
 constexpr float FRACTION_OF_WORK_GROUPS = 0.25f;
-constexpr size_t POPULATION_SIZE = 34; //(size_t)((64 + 48) * FRACTION_OF_WORK_GROUPS);
-constexpr size_t KEEP_BEST = 12; //(size_t)(POPULATION_SIZE * 0.65);
-/* constexpr size_t PICKS_PER_GENERATION = 1; */
-constexpr size_t PICKS_PER_GENERATION = 32 * 1024;
+constexpr size_t POPULATION_SIZE = 16;
+constexpr size_t KEEP_BEST = 8;
+constexpr size_t PICKS_PER_GENERATION = 32*1024;
 constexpr double CATEGORICAL_CROSSENTROPY_LOSS_WEIGHT = 0.0;
 constexpr double NEGATIVE_LOG_ACCURACY_LOSS_WEIGHT = 1.0;
 
 // Architectural Parameters
 constexpr size_t NUM_CARDS = 21467;
-constexpr size_t NUM_PICK_FILES = 16;
+constexpr size_t NUM_PICK_FILES = 6;
 constexpr size_t PACKS = 3;
 constexpr size_t PACK_SIZE = 15;
 constexpr size_t EMBEDDING_SIZE = 64;
 constexpr size_t NUM_COLORS = 5;
 constexpr size_t MAX_PACK_SIZE = 20;
-constexpr size_t MAX_SEEN = 512;
-constexpr size_t MAX_PICKED = 128;
+constexpr size_t MAX_SEEN = 408;
+constexpr size_t MAX_PICKED = 64;
 constexpr size_t NUM_COMBINATIONS = 32;
-constexpr size_t PROB_DIM_0_EXP = 5;
+constexpr size_t PROB_DIM_0_EXP = 4;
 constexpr size_t PROB_DIM_1_EXP = 4;
 constexpr size_t PROB_DIM_2_EXP = 2;
 constexpr size_t PROB_DIM_3_EXP = 5;
@@ -54,22 +53,50 @@ constexpr size_t PROB_DIM_2 = 1 << PROB_DIM_2_EXP;
 constexpr size_t PROB_DIM_3 = 1 << PROB_DIM_3_EXP;
 constexpr size_t PROB_DIM_4 = 1 << PROB_DIM_4_EXP;
 constexpr size_t PROB_DIM_5 = 1 << PROB_DIM_5_EXP;
-/* constexpr size_t PROB_DIM_0 = 9; */
-/* constexpr size_t PROB_DIM_1 = 7; */
-/* constexpr size_t PROB_DIM_2 = 4; */
-/* constexpr size_t PROB_DIM_3 = 18; */
-/* constexpr size_t PROB_DIM_4 = 18; */
-/* constexpr size_t PROB_DIM_5 = 18; */
+constexpr size_t PROB_DIM = PROB_DIM_0 * PROB_DIM_1 * PROB_DIM_2 * PROB_DIM_3 * PROB_DIM_4 * PROB_DIM_5;
 constexpr unsigned char BASIC_LAND_TYPES_REQUIRED = 2;
 constexpr unsigned char LANDS_TO_INCLUDE_COLOR = 3;
 constexpr std::array<char, NUM_COLORS> COLORS{'w', 'u', 'b', 'r', 'g'};
 using index_type = unsigned short;
 using Weights = float[PACKS][PACK_SIZE];
 using Lands = unsigned char[NUM_COMBINATIONS];
+constexpr size_t MAX_REQUIREMENTS = 5;
 struct ColorRequirement {
-    std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> requirements[5];
-    unsigned char requirements_count;
-    size_t offset;
+#ifdef CONSIDER_NON_BASICS
+    std::pair<unsigned char[NUM_COMBINATIONS], unsigned char> requirements[5]{};
+#else
+    std::pair<unsigned char[8], unsigned char> requirements[5]{};
+#endif
+    unsigned char requirements_count{0};
+    size_t offset{0};
+
+    ColorRequirement() = default;
+    ColorRequirement(const unsigned char requirements_count, const size_t offset) : requirements_count(requirements_count), offset(offset) {}
+    constexpr ColorRequirement(const ColorRequirement& other) {
+        for (size_t i=0; i < 5; i++) {
+#ifdef CONSIDER_NON_BASICS
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) requirements[i].first[j] = other.requirements[i].first[j];
+#else
+            for (size_t j=0; j < 8; j++) requirements[i].first[j] = other.requirements[i].first[j];
+#endif
+            requirements[i].second = other.requirements[i].second;
+        }
+        requirements_count = other.requirements_count;
+        offset = other.offset;
+    }
+    constexpr ColorRequirement& operator=(const ColorRequirement& other) {
+        for (size_t i=0; i < 5; i++) {
+#ifdef CONSIDER_NON_BASICS
+            for (size_t j=0; j < NUM_COMBINATIONS; j++) requirements[i].first[j] = other.requirements[i].first[j];
+#else
+            for (size_t j=0; j < 8; j++) requirements[i].first[j] = other.requirements[i].first[j];
+#endif
+            requirements[i].second = other.requirements[i].second;
+        }
+        requirements_count = other.requirements_count;
+        offset = other.offset;
+        return *this;
+    }
 };
 using Embedding = std::array<float, EMBEDDING_SIZE>;
 //using CastingProbabilityTable = std::array<std::array<std::array<std::array<std::array<std::array<float, PROB_DIM_5>, PROB_DIM_4>, PROB_DIM_3>, PROB_DIM_2>, PROB_DIM_1>, PROB_DIM_0>;
@@ -228,7 +255,9 @@ struct Variables {
         for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) internal_synergy_weights[i][j] = INITIAL_INTERNAL_SYNERGY_WEIGHTS[i][j];
         for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) openness_weights[i][j] = INITIAL_OPENNESS_WEIGHTS[i][j];
         for (size_t i=0; i < PACKS; i++) for (size_t j=0; j < PACK_SIZE; j++) colors_weights[i][j] = INITIAL_COLORS_WEIGHTS[i][j];
+#ifdef OPTIMIZE_RATINGS
         for (size_t i=0; i < NUM_CARDS; i++) ratings[i] = INITIAL_RATINGS[i];
+#endif
     }
 
     explicit Variables(std::mt19937_64 & gen) {
@@ -325,8 +354,11 @@ struct Variables {
 
 struct Pick {
     index_type in_pack[MAX_PACK_SIZE]{std::numeric_limits<index_type>::max()};
+    index_type in_pack_count{0};
     index_type seen[MAX_SEEN]{std::numeric_limits<index_type>::max()};
+    index_type seen_count{0};
     index_type picked[MAX_PICKED]{std::numeric_limits<index_type>::max()};
+    index_type picked_count{0};
     unsigned char pack_num{0};
     unsigned char pick_num{0};
     unsigned char pack_size{0};
@@ -343,40 +375,71 @@ struct Constants {
     bool is_fetch[NUM_CARDS];
     bool has_basic_land_types[NUM_CARDS];
     float similarities[NUM_CARDS][NUM_CARDS];
-    float prob_to_cast[PROB_DIM_0 * PROB_DIM_1 * PROB_DIM_2 * PROB_DIM_3 * PROB_DIM_4 * PROB_DIM_5];
+    float prob_to_cast[PROB_DIM];
 #ifndef OPTIMIZE_RATINGS
     float ratings[NUM_CARDS];
 #endif
+};
 
-    constexpr float& get_prob_to_cast(size_t cmc, size_t required_a, size_t land_count_a) noexcept {
-        return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
-        //return prob_to_cast[cmc][required_a][0][0][0][land_count_a];
-    }
+constexpr float& get_prob_to_cast(float (&prob_to_cast)[PROB_DIM], const size_t cmc, const size_t required_a, const size_t land_count_a) noexcept {
+    return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
+}
 
-    constexpr float& get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t land_count_a,
-                                      size_t land_count_b, size_t land_count_ab) noexcept {
-        return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
-        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
-    }
+constexpr float& get_prob_to_cast(float (&prob_to_cast)[PROB_DIM], const size_t cmc, const size_t required_a, const size_t required_b, const size_t land_count_a,
+                                  const size_t land_count_b, const size_t land_count_ab) noexcept {
+    return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+}
 
-    constexpr float get_prob_to_cast(size_t cmc, size_t required_a, size_t land_count_a) const noexcept {
-        return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
-        //return prob_to_cast[cmc][required_a][0][0][0][land_count_a];
-    }
+constexpr float get_prob_to_cast(const float *prob_to_cast, const size_t cmc, const size_t required_a, const size_t land_count_a) noexcept {
+    return prob_to_cast[(((cmc << PROB_DIM_1_EXP) | required_a) << (PROB_DIM_2_EXP + PROB_DIM_3_EXP + PROB_DIM_4_EXP + PROB_DIM_5_EXP)) | land_count_a];
+}
 
-    constexpr float get_prob_to_cast(size_t cmc, size_t required_a, size_t required_b, size_t land_count_a,
-                                     size_t land_count_b, size_t land_count_ab) const noexcept {
-        return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
-        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
-    }
+constexpr float get_prob_to_cast(const float *prob_to_cast, const size_t cmc, const size_t required_a, const size_t required_b, const size_t land_count_a,
+                                 const size_t land_count_b, const size_t land_count_ab) noexcept {
+    return prob_to_cast[(((((((((cmc << PROB_DIM_1_EXP) | required_a) << PROB_DIM_2_EXP) | required_b) << PROB_DIM_3_EXP) | land_count_ab) << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+}
 
-    constexpr float get_prob_to_cast(size_t offset, size_t land_count_a) const noexcept {
-        return prob_to_cast[offset | land_count_a];
-    }
+constexpr float get_prob_to_cast(const float *prob_to_cast, const size_t offset, const size_t land_count_a) noexcept {
+    return prob_to_cast[offset | land_count_a];
+}
 
-    constexpr float get_prob_to_cast(size_t offset, size_t land_count_a, size_t land_count_b, size_t land_count_ab) const noexcept {
-        return prob_to_cast[offset | (((land_count_ab << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
-        //return prob_to_cast[cmc][required_a][required_b][land_count_ab][land_count_b][land_count_a];
+constexpr float get_prob_to_cast(const float *prob_to_cast, const size_t offset, const size_t land_count_a, const size_t land_count_b, const size_t land_count_ab) noexcept {
+    return prob_to_cast[offset | (((land_count_ab << PROB_DIM_4_EXP) | land_count_b) << PROB_DIM_5_EXP) | land_count_a];
+}
+
+struct ExpandedPick : public Pick {
+    float in_pack_similarities[MAX_PACK_SIZE][MAX_PICKED];
+    ColorRequirement in_pack_color_requirements[MAX_PACK_SIZE];
+    unsigned char in_pack_cmcs[MAX_PACK_SIZE];
+    bool in_pack_is_land[MAX_PACK_SIZE];
+    bool in_pack_card_colors[MAX_PACK_SIZE][5];
+    bool in_pack_is_fetch[MAX_PACK_SIZE];
+    bool in_pack_has_basic_land_types[MAX_PACK_SIZE];
+    ColorRequirement seen_color_requirements[MAX_SEEN];
+    unsigned char seen_cmcs[MAX_SEEN];
+    ColorRequirement picked_color_requirements[MAX_PICKED];
+    unsigned char picked_cmcs[MAX_PICKED];
+    float picked_similarities[MAX_PICKED][MAX_PICKED];
+
+    ExpandedPick(const Pick& pick, const Constants& constants) {
+        *((Pick*)this) = pick;
+        for (size_t i=0; i < in_pack_count; i++) {
+            in_pack_color_requirements[i] = constants.color_requirements[in_pack[i]];
+            in_pack_cmcs[i] = constants.cmcs[in_pack[i]];
+            in_pack_is_land[i] = constants.is_land[in_pack[i]];
+            in_pack_is_fetch[i] = constants.is_fetch[in_pack[i]];
+            in_pack_has_basic_land_types[i] = constants.has_basic_land_types[in_pack[i]];
+            for (size_t j=0; j < pick.picked_count; j++) in_pack_similarities[i][j] = constants.similarities[in_pack[i]][picked[j]];
+        }
+        for (size_t i=0; i < seen_count; i++) {
+            seen_color_requirements[i] = constants.color_requirements[seen[i]];
+            seen_cmcs[i] = constants.cmcs[seen[i]];
+        }
+        for (size_t i=0; i < picked_count; i++) {
+            picked_color_requirements[i] = constants.color_requirements[picked[i]];
+            picked_cmcs[i] = constants.cmcs[picked[i]];
+            for (size_t j=0; j < picked_count; j++) picked_similarities[i][j] = constants.similarities[picked[i]][picked[j]];
+        }
     }
 };
 
@@ -395,7 +458,7 @@ std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations(const std::ve
                                                                    const std::shared_ptr<const Constants>& constants);
 #ifdef USE_CUDA
 std::array<std::array<double, 4>, POPULATION_SIZE> run_simulations_cuda(const std::vector<Variables>& variables,
-                                                                        const std::vector<Pick>& picks, const float temperature,
-                                                                        const std::shared_ptr<const Constants>& constants);
+                                                                        const std::vector<ExpandedPick>& picks, float temperature,
+                                                                        const float (&prob_to_cast)[PROB_DIM]);
 #endif
 #endif //DRAFTBOTOPTIMIZATION_DRAFTBOT_OPTIMIZATION_H//

@@ -13,7 +13,7 @@
 #########################
 
 # The minimum version of 'cmake' necessary to build this project
-cmake_minimum_required (VERSION 3.17.1)
+cmake_minimum_required (VERSION 3.18)
 
 set(OPTIMIZATION_ALGORITHMS "Genetic;CrossEntropy;DifferentialEvolution;CmaEs" CACHE STRING "The algorithms to compile")
 
@@ -66,7 +66,8 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
     if (USE_CUDA)
         target_compile_definitions(${TARGET_NAME} PRIVATE USE_CUDA)
         target_sources(${TARGET_NAME} PRIVATE draftbot_optimization.cu)
-        target_compile_options(${TARGET_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr -arch=sm_75 --use_fast_math --extra-device-vectorization>)
+        set_property(TARGET ${TARGET_NAME} PROPERTY CUDA_ARCHITECTURES 75)
+        target_compile_options(${TARGET_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr --use_fast_math --extra-device-vectorization -lineinfo>)
     endif()
     if (CONSIDER_NON_BASICS)
         target_compile_definitions(${TARGET_NAME} PRIVATE CONSIDER_NON_BASICS)
@@ -83,7 +84,7 @@ foreach(ALGORITHM IN LISTS OPTIMIZATION_ALGORITHMS)
             target_link_options(${TARGET_NAME} PRIVATE /debug -incremental:no /wholearchive:clang_rt.asan_dynamic-x86_64.lib /wholearchive:clang_rt.asan_dynamic_runtime_thunk-x86_64.lib)
         endif()
     else()
-        target_compile_options(${TARGET_NAME} PRIVATE -march=native -ffast-math)
+        target_compile_options(${TARGET_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-march=native -ffast-math>)
     endif()
 
     set_target_properties (${TARGET_NAME} PROPERTIES CXX_STANDARD 20
